@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Graphe — participation sémantique</title>
+<link rel="stylesheet" href="src/styles.css" />
+</head>
+<body>
+
+<canvas id="graph-canvas"></canvas>
+
+<main class="stage">
+  <div class="prompt-block">
+    <h1 class="prompt-headline">Qu'ajoutez-vous à l'espace collectif&nbsp;?</h1>
+    <form id="submit-form" class="submit-form" autocomplete="off">
+      <input
+        id="submit-input"
+        type="text"
+        placeholder="Écrivez une idée, une objection, une question…"
+        maxlength="2000"
+      />
+      <button type="submit" id="submit-button">Envoyer</button>
+    </form>
+    <p id="status-line" class="status-line" aria-live="polite"></p>
+  </div>
+
+  <div id="auth-panel" class="auth-panel hidden">
+    <p class="auth-copy">
+      Pour publier une proposition, connectez-vous avec GitHub.
+      Aucune information sur votre compte n'est stockée ailleurs que
+      dans cet onglet, et l'accès demandé se limite aux dépôts publics.
+    </p>
+    <button id="auth-button" class="auth-button">Se connecter avec GitHub</button>
+    <div id="auth-device-code" class="auth-device-code hidden"></div>
+  </div>
+
+  <div id="result-panel" class="result-panel hidden">
+    <div class="result-header">
+      <span id="result-domain" class="result-domain"></span>
+      <button id="result-close" class="result-close" aria-label="Fermer">✕</button>
+    </div>
+    <div id="result-concepts" class="result-concepts"></div>
+    <div id="result-relations" class="result-relations"></div>
+  </div>
+</main>
+
+<footer class="corner-note">
+  <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations
+</footer>
+
+<script type="module" src="src/app.js"></script>
+</body>
+</html>

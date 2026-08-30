@@ -1,0 +1,6 @@
+name = "sgd-oauth-relay"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# Free tier is plenty: this worker holds no state and no secrets,
+# it only relays two POST requests per login.

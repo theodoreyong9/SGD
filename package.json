@@ -1,0 +1,14 @@
+{
+  "name": "semantic-graph-democracy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "SGD — participation collective par graphe sémantique, sur GitHub + GitHub Pages + WebLLM.",
+  "scripts": {
+    "validate": "node scripts/validate-submission.mjs",
+    "process": "node scripts/process-graph.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

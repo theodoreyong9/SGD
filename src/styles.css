@@ -1,0 +1,230 @@
+/*
+  Design plan
+  Color   — base #10141C (deep slate-indigo, not pure black), surface #171D28,
+            text #E8E3D8 (warm paper, not stark white), text-muted rgba(232,227,216,.5),
+            accent-agree #C79A3B (civic brass — permanence, consensus),
+            accent-oppose #A6564B (muted ink-rust — dissent, not alarm red).
+  Type    — display: 'Fraunces' (humanist serif, monumental without being a cliché
+            Playfair), body/UI: 'IBM Plex Sans' (plain, legible, civic-document feel).
+  Layout  — full-bleed graph canvas as the primary surface; a single centered
+            prompt floats above it with no card/border; results expand inline
+            below the prompt rather than in a modal. Left-aligned once results
+            appear (reading a list), centered before that (a single invitation).
+  Principle — the graph IS the interface; text-entry is the only chrome.
+*/
+
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500&display=swap');
+
+:root {
+  --bg: #10141c;
+  --surface: #171d28;
+  --text: #e8e3d8;
+  --text-muted: rgba(232, 227, 216, 0.52);
+  --text-faint: rgba(232, 227, 216, 0.28);
+  --accent-agree: #c79a3b;
+  --accent-oppose: #a6564b;
+  --accent-neutral: #5c7a99;
+  --r: 4px;
+  --font-display: 'Fraunces', serif;
+  --font-body: 'IBM Plex Sans', sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  overflow: hidden;
+}
+
+#graph-canvas {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+}
+
+.stage {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: none;
+}
+
+.prompt-block {
+  pointer-events: auto;
+  width: min(560px, 90vw);
+  text-align: center;
+}
+
+.prompt-headline {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: clamp(1.5rem, 4vw, 2.1rem);
+  line-height: 1.25;
+  margin: 0 0 28px;
+  color: var(--text);
+}
+
+.submit-form {
+  display: flex;
+  gap: 10px;
+  border-bottom: 1px solid rgba(232, 227, 216, 0.18);
+  padding-bottom: 10px;
+  transition: border-color 0.2s ease;
+}
+
+.submit-form:focus-within {
+  border-bottom-color: var(--accent-agree);
+}
+
+#submit-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 1.05rem;
+  padding: 8px 4px;
+}
+
+#submit-input::placeholder {
+  color: var(--text-faint);
+}
+
+#submit-button {
+  background: none;
+  border: none;
+  color: var(--accent-agree);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  padding: 8px 4px;
+}
+
+#submit-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.status-line {
+  min-height: 1.4em;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.hidden { display: none !important; }
+
+.auth-panel {
+  pointer-events: auto;
+  margin-top: 20px;
+  width: min(480px, 90vw);
+  text-align: center;
+}
+
+.auth-copy {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 14px;
+}
+
+.auth-button {
+  background: var(--accent-agree);
+  color: var(--bg);
+  border: none;
+  border-radius: var(--r);
+  padding: 10px 18px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.auth-device-code {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  letter-spacing: 0.08em;
+  color: var(--accent-agree);
+}
+
+.result-panel {
+  pointer-events: auto;
+  margin-top: 28px;
+  width: min(560px, 90vw);
+  background: rgba(23, 29, 40, 0.9);
+  border-left: 2px solid var(--accent-agree);
+  padding: 18px 20px;
+  text-align: left;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.result-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+}
+
+.result-domain {
+  font-family: var(--font-display);
+  font-size: 1rem;
+  color: var(--accent-agree);
+}
+
+.result-close {
+  background: none;
+  border: none;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.result-concepts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.result-concepts span {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  border: 1px solid rgba(232, 227, 216, 0.18);
+  border-radius: var(--r);
+  padding: 3px 9px;
+}
+
+.result-relations {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.7;
+}
+
+.corner-note {
+  position: fixed;
+  bottom: 18px;
+  right: 22px;
+  z-index: 1;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+  font-family: var(--font-body);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #graph-canvas { display: none; }
+}
