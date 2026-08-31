@@ -1,6 +1,6 @@
 {
   "name": "semantic-graph-democracy",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "SGD — participation collective par graphe sémantique, sur GitHub + GitHub Pages + WebLLM.",

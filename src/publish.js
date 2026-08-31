@@ -22,8 +22,8 @@
 // Ce que ça NE garantit PAS (voir scripts/validate-submission.mjs) : le
 // corps de l'Issue reste du texte que N'IMPORTE QUI peut modifier avant de
 // cliquer "Submit", ou falsifier via l'API avec son propre token. C'est
-// pour ça que rien dans ce fichier n'est jamais fait confiance côté
-// serveur — canonical_key est toujours recalculé à partir de zéro.
+// pour ça que le serveur ne fait plus confiance à AUCUN champ structuré de
+// ce payload — voir la note sur `text` ci-dessous.
 
 import { OWNER, REPO } from "./config.js";
 
@@ -34,20 +34,35 @@ import { OWNER, REPO } from "./config.js";
 export const SUBMISSION_MARKER = "<!-- sgd:submission:v1 -->";
 
 // Limite prudente : au-delà, certains proxys/serveurs tronquent les URL
-// très longues avant même qu'elles n'atteignent GitHub. 2000 caractères de
-// texte + quelques concepts/relations restent largement en dessous.
+// très longues avant même qu'elles n'atteignent GitHub.
 const MAX_URL_LENGTH = 7500;
 
 export class SubmissionTooLargeError extends Error {}
 
-// buildSubmissionIssueUrl({ text, semantic, key }) -> string (URL complète)
-export function buildSubmissionIssueUrl({ text, semantic, key }) {
+// buildSubmissionIssueUrl({ text, ref }) -> string (URL complète)
+//
+// CHANGEMENT IMPORTANT : ce payload ne contient plus `semantic` ni
+// `canonical_key`. Jusqu'ici, le navigateur envoyait le résultat de sa
+// propre extraction WebLLM, et le serveur se contentait de revérifier le
+// hash — ce qui protégeait contre un hash falsifié, mais pas contre un
+// bloc `semantic` construit à la main, sans rapport réel avec `text`, tout
+// en restant interne-cohérent. Envoyer encore ce bloc n'aurait plus aucun
+// effet : scripts/validate-submission.mjs et scripts/process-graph.mjs ne
+// le lisent plus du tout. `text` est désormais la SEULE donnée qui compte
+// — c'est le serveur qui en extrait sa propre structure faisant autorité
+// (voir scripts/semantic-extract.mjs).
+//
+// `ref` est un identifiant généré côté client (voir src/app.js,
+// crypto.randomUUID()), sans AUCUN rôle protocolaire — il ne sert qu'à
+// retrouver cette Issue plus tard via l'API Search de GitHub, pour le
+// suivi affiché dans "Vos soumissions" (src/tracker.js). Le remplacer ou
+// le supprimer ne change rien à ce qui est accepté ou rejeté.
+export function buildSubmissionIssueUrl({ text, ref }) {
   const payload = {
     text,
-    semantic,
-    canonical_key: key,
+    ref,
     submitted_at: new Date().toISOString(),
-    client_version: "2.0.0",
+    client_version: "3.0.0",
   };
 
   const title = `[SGD] ${text.slice(0, 72)}`;
@@ -55,9 +70,10 @@ export function buildSubmissionIssueUrl({ text, semantic, key }) {
     SUBMISSION_MARKER,
     "",
     "Cette Issue a été pré-remplie automatiquement par l'interface SGD.",
-    "Le bloc structuré ci-dessous sera entièrement revalidé et recalculé",
-    "côté serveur avant tout ajout au graphe — rien n'est fait confiance",
-    "tel quel, y compris `canonical_key`.",
+    "Seul le champ `text` ci-dessous est utilisé : la structure sémantique",
+    "et l'identité de cette proposition sont entièrement recalculées côté",
+    "serveur, à partir de ce texte seul — rien d'autre dans ce bloc n'est",
+    "lu ni fait confiance.",
     "",
     "```json",
     JSON.stringify(payload, null, 2),
@@ -69,7 +85,7 @@ export function buildSubmissionIssueUrl({ text, semantic, key }) {
 
   if (url.length > MAX_URL_LENGTH) {
     throw new SubmissionTooLargeError(
-      "Cette proposition est trop longue pour le lien de soumission. Raccourcissez le texte ou réduisez le nombre de concepts/relations extraits."
+      "Cette proposition est trop longue pour le lien de soumission. Raccourcissez le texte."
     );
   }
 

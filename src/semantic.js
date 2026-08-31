@@ -1,12 +1,15 @@
-// Semantic layer: text -> structured representation -> deterministic canonical key.
+// Semantic layer: text -> structured representation, pour l'APERÇU
+// LOCAL uniquement.
 //
-// Split per section 35 of the spec ("Séparation IA / protocole"):
-//   - parseWithAI()   : probabilistic, does the actual language understanding
-//   - canonicalKey()  : deterministic, re-verifiable by the CI with zero AI
-//
-// The AI's job is ONLY to extract structure. It is never trusted to decide
-// scores, novelty, or identity — those are recomputed server-side in
-// scripts/process-graph.mjs from the deterministic canonical_key.
+// CHANGEMENT IMPORTANT : ce fichier ne détermine plus l'identité d'une
+// soumission. L'extraction sémantique qui fait autorité tourne désormais
+// côté serveur (scripts/semantic-extract.mjs, sur le seul `text` soumis),
+// pour empêcher qu'un client construise un bloc `semantic` sans rapport
+// réel avec son texte tout en restant interne-cohérent. `parseWithAI` et
+// `canonicalKey` ci-dessous ne servent donc plus qu'à afficher un aperçu
+// avant publication (concepts, domaine, proposition la plus proche dans
+// le graphe) — jamais transmis au serveur, jamais garanti de correspondre
+// à ce que le serveur produira pour le même texte.
 
 let engine = null;
 let loadingPromise = null;

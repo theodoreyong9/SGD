@@ -1,36 +1,30 @@
-// Runs from the single privileged workflow (.github/workflows/
-// process-submission.yml), triggered on `issues: opened`. Unlike the old
-// PR-based version, there is no untrusted CODE to isolate here — only
-// untrusted DATA (the issue body text), which THIS script — checked out
-// from `main`, never anything an issue author could alter — parses with
-// JSON.parse and validates against a fixed schema. Nothing here ever
-// executes anything the issue author wrote.
+// Runs from the privileged workflow (.github/workflows/process-submission.yml),
+// triggered on `issues: opened`. The issue body is UNTRUSTED DATA, never
+// executed — this script only ever JSON.parse's it and checks it against a
+// fixed schema.
 //
-// Reads its input from ISSUE_PAYLOAD_PATH: a JSON file of shape
-// { number, login, body } written beforehand by an actions/github-script
-// step (never interpolated into a shell string — see the workflow file
-// for why that distinction matters for injection-safety).
+// CHANGEMENT IMPORTANT : ce validateur ne lit plus que `text`. Les
+// versions précédentes acceptaient aussi un bloc `semantic` et un
+// `canonical_key` déclarés par le client, revalidés en recalculant le
+// hash — ce qui protégeait contre un hash falsifié, mais pas contre un
+// bloc `semantic` construit à la main, sans rapport réel avec `text`, tout
+// en restant interne-cohérent. Cette structure n'a désormais plus AUCUN
+// rôle : même si un client (ancien ou malveillant) l'envoie encore, ce
+// fichier ne la lit jamais, et scripts/process-graph.mjs ne la lira pas
+// non plus. Seule l'extraction serveur (scripts/semantic-extract.mjs, sur
+// le seul `text`) produit la structure qui compte. Voir le header de ce
+// dernier fichier pour le raisonnement complet.
 //
-// On success, writes the validated submission to submissions/pending/ and
-// prints its path so the workflow can pick it up. It never merges, never
-// pushes, never touches anything else in the repo — that stays entirely
-// in the hands of scripts/process-graph.mjs, still run as a separate step.
+// Ce que CE fichier garantit encore : que `text` est bien une chaîne non
+// vide, dans une longueur raisonnable, et que l'auteur n'a pas dépassé le
+// quota de soumissions par jour. Rien de plus — la structuration
+// sémantique et l'identité (canonical_key) sont désormais entièrement la
+// responsabilité de scripts/process-graph.mjs, en aval.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { canonicalKey } from "./canonical.mjs";
 
 const MAX_TEXT_LENGTH = 2000;
-const MAX_CONCEPTS = 20;
-const MAX_RELATIONS = 20;
-const ALLOWED_RELATION_TYPES = new Set([
-  "implique", "contredit", "complete", "generalise", "specialise",
-  "alternative_a", "depend_de", "questionne",
-]);
-const ALLOWED_DOMAINS = new Set([
-  "environnement", "transport", "energie", "sante", "education",
-  "economie", "technologie", "international", "social", "autre",
-]);
 const PENDING_DIR = "submissions/pending";
 const SUBMISSION_MARKER = "<!-- sgd:submission:v1 -->";
 
@@ -60,69 +54,47 @@ if (!payloadPath || !existsSync(payloadPath)) {
 const { number: issueNumber, login: author, body } = JSON.parse(readFileSync(payloadPath, "utf-8"));
 const reasons = [];
 
-// 1. This issue must actually carry our marker. The workflow already
-// filters on this before running the script, but re-checking here means
-// this script stays safe to run standalone/locally too.
+// 1. Ce doit être une issue de soumission SGD, pas une issue quelconque.
 if (typeof body !== "string" || !body.includes(SUBMISSION_MARKER)) {
   fail(["l'issue ne contient pas le marqueur de soumission SGD"]);
 }
 
-// 2. Extract the fenced ```json ... ``` block. Anything outside it
-// (explanatory prose the author might add, quoted replies, etc.) is
-// ignored entirely.
+// 2. Extraction du bloc ```json ... ``` — tout le reste du corps
+// (explications, réponses citées, etc.) est ignoré.
 const jsonMatch = body.match(/```json\s*([\s\S]*?)```/i);
 if (!jsonMatch) {
   fail(["aucun bloc ```json``` trouvé dans le corps de l'issue"]);
 }
 
-let submission;
+let submitted;
 try {
-  submission = JSON.parse(jsonMatch[1]);
+  submitted = JSON.parse(jsonMatch[1]);
 } catch (e) {
   fail([`JSON invalide dans le bloc de soumission: ${e.message}`]);
 }
 
-// 3. Schema + bounds. Generous enough for real proposals, tight enough
-// that a script can't smuggle megabytes of junk into the repo per issue.
-const s = submission.semantic || {};
-if (typeof submission.text !== "string" || submission.text.length === 0) {
+// 3. La SEULE donnée qui compte : `text`. Tout le reste du JSON soumis
+// (semantic, canonical_key, ou n'importe quel autre champ qu'un ancien
+// client ou un attaquant aurait pu inclure) est simplement ignoré — ni lu
+// ici, ni transmis à scripts/process-graph.mjs.
+const text = typeof submitted.text === "string" ? submitted.text.trim() : "";
+
+if (!text) {
   reasons.push("champ 'text' manquant ou vide");
 }
-if (submission.text && submission.text.length > MAX_TEXT_LENGTH) {
+if (text.length > MAX_TEXT_LENGTH) {
   reasons.push(`'text' dépasse ${MAX_TEXT_LENGTH} caractères`);
-}
-if (!Array.isArray(s.concepts) || s.concepts.length === 0) {
-  reasons.push("'semantic.concepts' doit être un tableau non vide");
-}
-if (Array.isArray(s.concepts) && s.concepts.length > MAX_CONCEPTS) {
-  reasons.push(`'semantic.concepts' dépasse ${MAX_CONCEPTS} éléments`);
-}
-if (s.relations && s.relations.length > MAX_RELATIONS) {
-  reasons.push(`'semantic.relations' dépasse ${MAX_RELATIONS} éléments`);
-}
-for (const r of s.relations || []) {
-  if (!ALLOWED_RELATION_TYPES.has(r.type)) {
-    reasons.push(`type de relation inconnu: ${r.type}`);
-  }
-}
-if (!ALLOWED_DOMAINS.has(s.domain)) {
-  reasons.push(`domaine inconnu: ${s.domain}`);
-}
-if (!submission.canonical_key || typeof submission.canonical_key !== "string") {
-  reasons.push("'canonical_key' manquant");
 }
 
 if (reasons.length) fail(reasons);
 
-// 4. Rate-limit by GitHub account. This is NOT a Sybil-proofing mechanism
-// — creating accounts is cheap — it only protects against a single
-// compromised or automated account flooding the queue faster than the
-// diminishing-return scoring can absorb it. Every issue carrying the
-// marker gets labeled `sgd-submission` by the workflow BEFORE validation
-// (even invalid ones), so this count also catches malformed-JSON spam.
+// 4. Rate-limit par compte GitHub. Toute issue portant le marqueur est
+// labellisée AVANT ce contrôle (voir le workflow), y compris celles
+// jugées invalides ensuite — pour que le spam par texte vide ou trop long
+// compte aussi dans le quota, plutôt que d'offrir des essais gratuits.
 const MAX_SUBMISSIONS_PER_DAY = 30;
 const token = process.env.GITHUB_TOKEN;
-const repo = process.env.GITHUB_REPOSITORY; // "owner/name", set by Actions
+const repo = process.env.GITHUB_REPOSITORY;
 
 if (author && token && repo) {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -149,50 +121,22 @@ if (author && token && repo) {
   console.warn("Contexte d'auteur/token absent — rate-limit non vérifié (probablement un test local).");
 }
 
-// 5. Re-derive the canonical key deterministically — the AI-produced
-// structure is trusted for CONTENT, but identity/dedup NEVER depends on
-// the client's self-reported hash. Anyone can hand-edit the JSON block
-// before clicking "Submit new issue" (unlike the old fork+PR flow, there
-// is no client-side signature protecting it) — which is exactly why this
-// re-derivation, not the submitted hash, is what decides identity.
-const recomputed = canonicalKey({
-  concepts: s.concepts,
-  relations: s.relations,
-  objective: s.objective,
-  means: s.means,
-  domain: s.domain,
-});
-
-if (recomputed !== submission.canonical_key) {
-  fail([
-    `canonical_key ne correspond pas au contenu (déclaré: ${submission.canonical_key}, recalculé: ${recomputed}) — le protocole ne fait jamais confiance à un hash auto-déclaré`,
-  ]);
-}
-
-// 6. Write to submissions/pending/. There is no PR/fork step anymore —
-// the workflow that invokes this script has already checked out `main`
-// and will commit this file (plus the graph update) directly, since the
-// only untrusted input it ever touched was DATA, not code.
+// 5. Écrit le texte brut dans submissions/pending/ — nommé par numéro
+// d'issue, seul identifiant stable disponible à ce stade (canonical_key
+// n'existe pas encore : il sera calculé par process-graph.mjs à partir de
+// CE texte, jamais avant).
 if (!existsSync(PENDING_DIR)) mkdirSync(PENDING_DIR, { recursive: true });
 
-const filename = `${recomputed}__${Date.now()}.json`;
+const filename = `issue-${issueNumber}.json`;
 const filePath = join(PENDING_DIR, filename);
 writeFileSync(
   filePath,
   JSON.stringify(
     {
-      text: submission.text,
-      semantic: {
-        concepts: s.concepts,
-        relations: s.relations || [],
-        objective: s.objective || "",
-        means: s.means || "",
-        domain: s.domain,
-      },
-      canonical_key: recomputed,
+      text,
       submitted_at: new Date().toISOString(),
       source_issue: issueNumber,
-      client_version: submission.client_version || "unknown",
+      client_version: submitted.client_version || "unknown",
     },
     null,
     2

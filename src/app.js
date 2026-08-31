@@ -1,9 +1,9 @@
 import { createGraphRenderer } from "./graph-render.js";
-import { parseWithAI, canonicalKey, isWebGPUAvailable } from "./semantic.js";
+import { parseWithAI, isWebGPUAvailable } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
-import { recordSubmission, getTracked, refreshAllPending, setStatus as setTrackedStatus, dismissTracked } from "./tracker.js";
+import { recordSubmission, getTracked, refreshAllPending, dismissTracked } from "./tracker.js";
 
 const canvas = document.getElementById("graph-canvas");
 const renderer = createGraphRenderer(canvas);
@@ -34,7 +34,7 @@ const searchList = document.getElementById("search-list");
 const searchClose = document.getElementById("search-close");
 
 let graph = { nodes: [], edges: [] };
-let lastParsed = null; // { text, semantic, key }
+let lastParsed = null; // { text, semantic } — aperçu local uniquement, non-autoritaire
 
 async function loadGraph() {
   const res = await fetch("data/graph.json", { cache: "no-store" });
@@ -45,28 +45,20 @@ async function loadGraph() {
   reconcileTrackedWithGraph();
 }
 
-// Dès que le graphe rechargé contient déjà le canonical_key d'une
-// soumission suivie, on la marque "accepted" localement, sans attendre
-// l'API GitHub — le signal le plus rapide et le plus fiable qu'on ait,
-// puisqu'il vient directement du graphe publié. On met aussi en évidence
-// le nœud correspondant : pas besoin de relancer manuellement une
-// recherche pour voir sa propre contribution apparaître.
+// Une fois qu'une soumission suivie a un `node_id` connu (voir
+// src/tracker.js — découvert en lisant le commentaire de clôture posté
+// sur l'Issue, PAS deviné côté client), on vérifie s'il apparaît dans le
+// graphe fraîchement rechargé et on met en évidence le nœud correspondant
+// — pas besoin de relancer une recherche manuelle pour voir sa propre
+// contribution apparaître.
 function reconcileTrackedWithGraph() {
-  let changed = false;
-  let newlyAccepted = null;
   for (const t of getTracked()) {
-    if (t.status !== "accepted" && graph.nodes.some((n) => n.id === t.key)) {
-      setTrackedStatus(t.key, { status: "accepted" });
-      changed = true;
-      newlyAccepted = t.key;
-    }
-  }
-  if (changed) renderTracker();
-  if (newlyAccepted) {
-    const node = graph.nodes.find((n) => n.id === newlyAccepted);
+    if (!t.node_id) continue;
+    const node = graph.nodes.find((n) => n.id === t.node_id);
     if (node) {
       renderer.setHighlight(node.id);
       focusOnDomain(node.semantic.domain);
+      break; // on ne met en évidence que la plus récente trouvée
     }
   }
 }
@@ -185,8 +177,7 @@ function renderBreakdown(node) {
   return `<div class="breakdown"><div class="breakdown-total">Influence : ${b.influence}</div>${bars}</div>`;
 }
 
-async function showResult({ semantic, key }) {
-  const exactMatch = graph.nodes.find((n) => n.id === key);
+async function showResult({ semantic }) {
   const { node: closest, similarity } = await findClosestNode(semantic);
 
   resultDomain.textContent = semantic.domain;
@@ -197,22 +188,23 @@ async function showResult({ semantic, key }) {
   const lines = [];
   let breakdownNode = null;
 
-  if (exactMatch) {
-    lines.push(
-      `Cette formulation correspond déjà à une proposition existante (${exactMatch.stats.participants} participations, contribution marginale décroissante appliquée).`
-    );
-    renderer.setHighlight(exactMatch.id);
-    breakdownNode = exactMatch;
-  } else if (closest && similarity > 0.5) {
+  // Il n'y a plus de "correspondance exacte" à afficher ici : l'extraction
+  // qui fait autorité tourne côté serveur (scripts/semantic-extract.mjs),
+  // indépendamment de celle-ci. Comparer l'id que CET aperçu produirait à
+  // ceux du graphe n'aurait aucun sens — les deux extractions n'ont aucune
+  // raison de converger vers la même structure, même pour un texte
+  // identique. Seule la proximité par embedding reste un signal valide,
+  // puisqu'elle porte sur le contenu réel, pas sur une égalité structurelle.
+  if (closest && similarity > 0.5) {
     lines.push(
       `Idée proche à ${Math.round(similarity * 100)}% (par similarité sémantique, pas par mots-clés) d'une proposition existante : « ${escapeHtml(
         closest.text
-      )} ». Une nouvelle nuance sera tout de même enregistrée.`
+      )} ». Aperçu local — l'extraction qui décidera réellement de la position de votre proposition dans le graphe se fait côté serveur, une fois publiée.`
     );
     renderer.setHighlight(closest.id);
     breakdownNode = closest;
   } else {
-    lines.push("Aucune proposition proche trouvée — ceci introduirait une idée nouvelle dans le graphe.");
+    lines.push("Aucune proposition proche trouvée dans cet aperçu — ceci pourrait introduire une idée nouvelle dans le graphe.");
     renderer.setHighlight(null);
   }
 
@@ -245,11 +237,12 @@ async function showResult({ semantic, key }) {
   resultPanel.classList.remove("hidden");
 
   try {
-    const url = buildSubmissionIssueUrl(lastParsed);
+    const ref = crypto.randomUUID();
+    const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref });
     publishLink.href = url;
     publishPanel.classList.remove("hidden");
     publishLink.onclick = () => {
-      recordSubmission({ key: lastParsed.key, text: lastParsed.text, domain: lastParsed.semantic.domain });
+      recordSubmission({ ref, text: lastParsed.text, domain: lastParsed.semantic.domain });
       publishStatus.textContent = "Enregistrée dans « Vos soumissions » ci-dessous — cliquez « Submit new issue » sur GitHub pour la publier réellement.";
       renderTracker();
     };
@@ -296,16 +289,16 @@ function renderTracker() {
           <div class="tracker-status">${STATUS_LABELS[t.status] || t.status}</div>
           ${reasonLine}
           ${link}
-          <button class="tracker-dismiss" data-key="${t.key}" aria-label="Retirer du suivi">✕</button>
+          <button class="tracker-dismiss" data-ref="${t.ref}" aria-label="Retirer du suivi">✕</button>
         </li>`;
     })
     .join("");
 }
 
 trackerList.addEventListener("click", (e) => {
-  const key = e.target.closest(".tracker-dismiss")?.dataset.key;
-  if (key) {
-    dismissTracked(key);
+  const ref = e.target.closest(".tracker-dismiss")?.dataset.ref;
+  if (ref) {
+    dismissTracked(ref);
     renderTracker();
   }
 });
@@ -348,10 +341,7 @@ form.addEventListener("submit", async (e) => {
 
     setStatus("Chargement du modèle local (une seule fois)…");
     const semantic = await parseWithAI(text, (report) => setStatus(report.text || "Chargement…"));
-
-    setStatus("Analyse et recherche dans le graphe…");
-    const key = await canonicalKey(semantic);
-    lastParsed = { text, semantic, key };
+    lastParsed = { text, semantic };
 
     setStatus("");
     await showResult(lastParsed);

@@ -7,6 +7,23 @@
 // qu'il a préparé, et interroger GitHub pour voir si une Issue
 // correspondante existe et où elle en est.
 //
+// CHANGEMENT IMPORTANT : ce module suivait auparavant chaque soumission
+// par son `canonical_key` — calculé côté client, et donc censé
+// correspondre à l'id du nœud une fois accepté. Ce n'est plus le cas :
+// l'extraction sémantique tourne désormais côté serveur (voir
+// scripts/semantic-extract.mjs), sur son propre modèle, indépendamment de
+// l'aperçu local. Le canonical_key que le client calcule pour son aperçu
+// et celui que le serveur calcule pour de vrai n'ont AUCUNE raison de
+// coïncider, même pour un texte identique. Le suivi utilise donc
+// maintenant deux identifiants bien distincts :
+//   - `ref` : un jeton généré côté client (crypto.randomUUID(), voir
+//     src/app.js), sans aucun rôle protocolaire — sert uniquement à
+//     retrouver l'Issue correspondante via l'API Search de GitHub.
+//   - `node_id` : le VRAI canonical_key, découvert a posteriori en
+//     analysant le commentaire de clôture que le workflow poste sur
+//     l'Issue une fois la soumission acceptée (voir
+//     .github/workflows/process-submission.yml).
+//
 // Stockage : localStorage, PAS de compte, PAS de serveur à nous — cohérent
 // avec le reste du projet. Ça ne survit que dans CE navigateur ; si
 // l'utilisateur change d'appareil, il perd le suivi (mais pas sa
@@ -21,13 +38,18 @@
 //     bouton "Actualiser".
 //   - La recherche full-text de GitHub sur `in:body` n'est pas un match
 //     exact garanti à 100% sur tous les caractères (comportement interne
-//     non documenté par GitHub) ; canonical_key fait 32 caractères hex,
-//     ce qui suffit en pratique à éviter les faux positifs.
+//     non documenté par GitHub) ; `ref` est un UUID, ce qui suffit en
+//     pratique à éviter les faux positifs.
 
 import { OWNER, REPO } from "./config.js";
 
 const STORAGE_KEY = "sgd_tracked_submissions";
 const MAX_TRACKED = 20;
+
+// Extrait le canonical_key du commentaire de clôture posté par le
+// workflow. Format attendu (voir process-submission.yml) : un nœud
+// identifié entre backticks, 32 caractères hexadécimaux.
+const NODE_ID_PATTERN = /nœud `([0-9a-f]{32})`/;
 
 function readAll() {
   try {
@@ -50,10 +72,11 @@ function writeAll(list) {
 // recordSubmission(...): appelé au moment où l'utilisateur clique sur le
 // lien d'ouverture d'Issue — AVANT de savoir s'il ira au bout du "Submit"
 // côté GitHub. Optimiste par nécessité : on n'a aucun autre signal.
-export function recordSubmission({ key, text, domain }) {
+export function recordSubmission({ ref, text, domain }) {
   const list = readAll();
   list.unshift({
-    key,
+    ref,
+    node_id: null, // découvert plus tard, voir refreshStatus
     text,
     domain,
     recorded_at: new Date().toISOString(),
@@ -69,29 +92,25 @@ export function getTracked() {
   return readAll();
 }
 
-export function dismissTracked(key) {
-  writeAll(readAll().filter((s) => s.key !== key));
+export function dismissTracked(ref) {
+  writeAll(readAll().filter((s) => s.ref !== ref));
 }
 
-// setStatus(key, patch): mise à jour locale directe, sans appel réseau —
-// utilisée par app.js pour marquer une soumission "accepted" dès que
-// data/graph.json (rechargé au démarrage) contient déjà son
-// canonical_key. C'est plus rapide et plus fiable que d'attendre
-// l'indexation de la recherche GitHub, une fois que le déploiement
-// GitHub Pages a réellement eu lieu.
-export function setStatus(key, patch) {
-  const list = readAll().map((s) => (s.key === key ? { ...s, ...patch } : s));
+// setStatus(ref, patch): mise à jour locale directe, sans appel réseau.
+export function setStatus(ref, patch) {
+  const list = readAll().map((s) => (s.ref === ref ? { ...s, ...patch } : s));
   writeAll(list);
   return list;
 }
 
 // refreshStatus(entry): interroge l'API Search de GitHub pour retrouver
-// l'Issue correspondant à ce canonical_key, et met à jour son statut.
-// Retourne l'entrée mise à jour ; ne lève jamais — une erreur réseau ou de
-// rate-limit laisse simplement le statut "pending" inchangé.
+// l'Issue correspondant à ce `ref`, et met à jour son statut — y compris
+// `node_id`, découvert dans le commentaire de clôture si la soumission a
+// été acceptée. Ne lève jamais ; une erreur réseau ou de rate-limit laisse
+// simplement l'entrée inchangée.
 export async function refreshStatus(entry) {
   try {
-    const query = encodeURIComponent(`repo:${OWNER}/${REPO} in:body "${entry.key}"`);
+    const query = encodeURIComponent(`repo:${OWNER}/${REPO} in:body "${entry.ref}"`);
     const res = await fetch(`https://api.github.com/search/issues?q=${query}`, {
       headers: { Accept: "application/vnd.github+json" },
     });
@@ -107,6 +126,7 @@ export async function refreshStatus(entry) {
       updated.status = "pending";
     } else if (issue.state_reason === "completed") {
       updated.status = "accepted";
+      updated.node_id = await fetchAcceptedNodeId(issue.number);
     } else if (issue.state_reason === "not_planned") {
       updated.status = "rejected";
       updated.reason = await fetchRejectionReason(issue.number);
@@ -114,11 +134,31 @@ export async function refreshStatus(entry) {
       updated.status = "unknown";
     }
 
-    const list = readAll().map((s) => (s.key === entry.key ? updated : s));
+    const list = readAll().map((s) => (s.ref === entry.ref ? updated : s));
     writeAll(list);
     return updated;
   } catch {
     return entry;
+  }
+}
+
+// Va chercher le VRAI canonical_key dans le commentaire de clôture d'une
+// Issue acceptée — c'est la seule façon pour le client de connaître
+// l'identité que le serveur a effectivement attribuée à sa soumission,
+// puisqu'il ne la calcule plus lui-même.
+async function fetchAcceptedNodeId(issueNumber) {
+  try {
+    const res = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/issues/${issueNumber}/comments`,
+      { headers: { Accept: "application/vnd.github+json" } }
+    );
+    if (!res.ok) return null;
+    const comments = await res.json();
+    const last = comments[comments.length - 1];
+    const match = last?.body?.match(NODE_ID_PATTERN);
+    return match ? match[1] : null;
+  } catch {
+    return null;
   }
 }
 

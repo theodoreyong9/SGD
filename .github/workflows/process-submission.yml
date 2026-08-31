@@ -85,7 +85,7 @@ jobs:
         with:
           node-version: 20
 
-      - name: Validate (re-derives canonical_key from scratch, never trusts the issue's)
+      - name: Validate (schema check on `text` only — nothing else is trusted)
         if: steps.gate.outputs.is_submission == 'true'
         env:
           ISSUE_PAYLOAD_PATH: issue-payload.json
@@ -124,16 +124,19 @@ jobs:
         if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
         run: npm ci --no-audit --no-fund
 
-      # The embedding model (~90MB) is downloaded once and cached; without
-      # this every submission would re-fetch it from huggingface.co.
-      - name: Cache embedding model
+      # Deux modèles partagent .cache/transformers : all-MiniLM-L6-v2
+      # (embeddings.mjs, ~90MB) et TinyLlama-1.1B-Chat (semantic-extract.mjs,
+      # nettement plus gros). Sans ce cache, chaque soumission retélécharge
+      # les deux depuis huggingface.co — lent, et inutilement coûteux en
+      # bande passante sur un runner partagé.
+      - name: Cache local models (embeddings + extraction)
         if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
         uses: actions/cache@v4
         with:
           path: .cache/transformers
-          key: transformers-all-MiniLM-L6-v2
+          key: transformers-minilm-tinyllama-v1
 
-      - name: Process graph (canonicalization, novelty, bridge, stability)
+      - name: Process graph (server-side extraction, canonicalization, novelty, bridge, stability)
         if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
         run: node scripts/process-graph.mjs
 
@@ -151,11 +154,29 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const fs = require("fs");
+            // Écrit par scripts/process-graph.mjs — contient le VRAI
+            // canonical_key calculé côté serveur, jamais celui qu'un
+            // client aurait pu proposer. Le format `nœud \`<hex>\`` ci-
+            // dessous est celui que src/tracker.js sait analyser
+            // (NODE_ID_PATTERN) — ne pas changer l'un sans l'autre.
+            let detail = "";
+            try {
+              const result = JSON.parse(fs.readFileSync("processing-result.json", "utf-8"));
+              const entry = result.processed.find(
+                (p) => p.source_issue === context.payload.issue.number
+              );
+              if (entry) {
+                detail = ` (nœud \`${entry.node_id}\`, domaine "${entry.domain}", influence ${entry.influence})`;
+              }
+            } catch (e) {
+              core.warning(`processing-result.json illisible: ${e.message}`);
+            }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: "Proposition validée et intégrée au graphe. Le graphe publié sur GitHub Pages se met à jour dans les prochaines minutes.",
+              body: `Proposition validée et intégrée au graphe${detail}. Le graphe publié sur GitHub Pages se met à jour dans les prochaines minutes.`,
             });
             await github.rest.issues.update({
               owner: context.repo.owner,

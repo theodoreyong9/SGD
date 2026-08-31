@@ -1,10 +1,15 @@
 // Runs AFTER validate-submission.mjs has written a validated file into
 // submissions/pending/, in the same privileged workflow step
-// (.github/workflows/process-submission.yml) — never on untrusted input
-// directly; the only thing this script ever reads from submissions/pending/
-// has already passed schema validation and canonical_key re-derivation.
+// (.github/workflows/process-submission.yml). What that file now contains
+// is ONLY `text` (plus bookkeeping like source_issue) — the client's
+// `semantic` block, if it ever sent one, is never read anywhere in this
+// pipeline. THIS script is what turns raw text into the structured
+// representation that decides canonical_key, via extractSemantic()
+// (scripts/semantic-extract.mjs). See that file's header for why this
+// moved server-side: it closes a real gap where a submitter could hand-
+// craft an internally-consistent `semantic` block unrelated to their own
+// `text`, which no amount of hash re-verification alone could catch.
 //
-
 // This is where sections 10-15, 21, and 37 of the spec become arithmetic:
 //   - repeated submissions of the same canonical proposition get a
 //     shrinking marginal contribution (R_P(n) = 1/n)
@@ -17,6 +22,8 @@
 import { readFileSync, writeFileSync, readdirSync, renameSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.mjs";
+import { extractSemantic } from "./semantic-extract.mjs";
+import { canonicalKey } from "./canonical.mjs";
 
 const GRAPH_PATH = "data/graph.json";
 const PENDING_DIR = "submissions/pending";
@@ -281,13 +288,31 @@ async function main() {
     return;
   }
 
+  // Un seul workflow ne traite en pratique qu'une Issue à la fois, mais on
+  // garde une boucle générale pour rester robuste si plusieurs fichiers
+  // s'accumulent (ex: rejeu manuel). Chaque résultat est consigné pour que
+  // le workflow puisse composer son commentaire de clôture avec le VRAI
+  // canonical_key — celui que le serveur a calculé, jamais celui, s'il
+  // existe encore, qu'un ancien client aurait pu inclure.
+  const processed = [];
+
   for (const file of pendingFiles) {
     const fullPath = join(PENDING_DIR, file);
-    const submission = JSON.parse(readFileSync(fullPath, "utf-8"));
+    const raw = JSON.parse(readFileSync(fullPath, "utf-8"));
 
-    // NOTE: this script trusts submission.canonical_key here because
-    // validate-submission.mjs already re-derived and checked it before merge.
-    // Nothing reaches main without passing through that gate first.
+    if (typeof raw.text !== "string" || raw.text.trim().length === 0) {
+      console.warn(`Ignoré (texte manquant): ${file}`);
+      renameSync(fullPath, join(PROCESSED_DIR, file));
+      continue;
+    }
+
+    // C'est ICI, et seulement ici, que la structure sémantique et
+    // canonical_key existent. `raw.semantic` / `raw.canonical_key`, si un
+    // ancien format de soumission les contenait encore, ne sont jamais lus.
+    const semantic = await extractSemantic(raw.text);
+    const key = canonicalKey(semantic);
+    const submission = { text: raw.text, semantic, canonical_key: key };
+
     const node = await upsertNode(graph, submission);
     await upsertEdges(graph, node, submission);
     await upsertSimilarityEdges(graph, node);
@@ -296,6 +321,13 @@ async function main() {
     console.log(
       `Traité: ${file} -> nœud ${node.id} (participants=${node.stats.participants}, contribution=${node.stats.contribution.toFixed(3)}, novelty=${node.stats.novelty.toFixed(3)})`
     );
+
+    processed.push({
+      source_issue: raw.source_issue ?? null,
+      node_id: node.id,
+      domain: semantic.domain,
+      concepts: semantic.concepts,
+    });
   }
 
   // Recompute influence breakdown for every node (bridge scores can change
@@ -307,6 +339,17 @@ async function main() {
   graph.updated_at = new Date().toISOString();
   writeFileSync(GRAPH_PATH, JSON.stringify(graph, null, 2));
   console.log(`Graphe mis à jour: ${graph.nodes.length} nœuds, ${graph.edges.length} relations.`);
+
+  // Lu par le workflow (étape "Comment + close as processed") pour inclure
+  // le vrai canonical_key dans le commentaire de clôture de l'Issue — sans
+  // ça, aucun moyen pour le suivi côté client (src/tracker.js) de savoir
+  // quel nœud correspond à sa soumission, puisque le client ne calcule
+  // plus jamais l'identité qui fait autorité.
+  for (const p of processed) {
+    const nodeForBreakdown = findNode(graph, p.node_id);
+    p.influence = nodeForBreakdown?.stats?.breakdown?.influence ?? null;
+  }
+  writeFileSync("processing-result.json", JSON.stringify({ processed }, null, 2));
 }
 
 main();

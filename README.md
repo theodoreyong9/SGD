@@ -8,16 +8,19 @@ au graphe collectif, sans bouton pour/contre.
 
 ```
 Navigateur (GitHub Pages, statique)
-  ├─ WebLLM (src/semantic.js)          — parsing sémantique local, dans le navigateur
-  ├─ Canonicalisation (src/semantic.js) — déterministe, miroir de scripts/canonical.mjs
-  ├─ Lien de soumission (src/publish.js) — Issue GitHub pré-remplie, aucun compte tiers
+  ├─ WebLLM (src/semantic.js)          — parsing sémantique local, APERÇU UNIQUEMENT
+  ├─ Lien de soumission (src/publish.js) — Issue GitHub pré-remplie, ne contient que `text`
   └─ Recherche pure (bouton "Rechercher") — embedding direct du texte, sans WebLLM,
        consulte le graphe sans jamais préparer de soumission
 
 GitHub Actions (deux workflows)
   ├─ process-submission.yml (issues: opened)
-  │    → extrait le bloc JSON du corps de l'issue (donnée, jamais du code exécuté)
-  │    → RECALCULE canonical_key à partir de zéro, ne fait jamais confiance à l'issue
+  │    → extrait `text` du corps de l'issue (donnée, jamais du code exécuté) —
+  │      tout le reste du bloc JSON (semantic, canonical_key) est ignoré, même
+  │      si un client en envoie encore
+  │    → scripts/semantic-extract.mjs : extraction sémantique SERVEUR à partir
+  │      de `text` seul — c'est CETTE structure, jamais celle d'un client, qui
+  │      détermine canonical_key
   │    → si valide : met à jour data/graph.json, commit + push sur main, ferme l'issue
   │    → si invalide : commente les raisons, ferme l'issue sans rien modifier
   └─ deploy.yml (push sur main OU fin de process-submission.yml)
@@ -26,6 +29,33 @@ GitHub Actions (deux workflows)
 
 Il n'y a plus ni relais CORS, ni OAuth App, ni fork/PR. Voir "Pourquoi ce
 choix" ci-dessous pour ce que ça change par rapport à la version précédente.
+
+## Pourquoi l'extraction sémantique tourne maintenant côté serveur
+
+Jusqu'ici, seul le navigateur de la personne qui soumet exécutait
+l'extraction WebLLM, et le serveur se contentait de revérifier que
+`canonical_key` correspondait bien au bloc `semantic` déclaré par ce même
+navigateur. Ça protège contre un hash falsifié isolément, mais pas contre
+un bloc `semantic` construit à la main, sans rapport réel avec `text`, tout
+en restant interne-cohérent avec lui-même — la personne qui soumet est
+justement celle dont on voulait garantir la neutralité de l'extraction.
+Aucune vérification de hash ne peut détecter ce cas : structurellement,
+c'est un JSON parfaitement valide.
+
+`scripts/semantic-extract.mjs` élimine le problème à la racine plutôt que
+de le détecter après coup : `scripts/validate-submission.mjs` ne lit plus
+QUE `text` — tout bloc `semantic` ou `canonical_key` qu'un client
+enverrait encore est purement et simplement ignoré, jamais transmis à la
+suite du pipeline. C'est le serveur qui extrait sa propre structure, sur
+un modèle qui tourne dans le runner GitHub Actions — gratuit et illimité
+sur dépôt public, comme pour les embeddings. Le WebLLM côté client
+(`src/semantic.js`) reste utilisé pour l'aperçu instantané avant
+publication, mais n'a plus aucun rôle protocolaire : rien de ce qu'il
+produit n'est envoyé au serveur.
+
+Coût réel de ce changement : la latence. Une génération CPU, même sur un
+petit modèle, prend potentiellement plusieurs dizaines de secondes — pas
+un problème puisque le traitement d'une Issue est déjà asynchrone.
 
 ## Pourquoi `deploy.yml` a deux déclencheurs
 
@@ -59,9 +89,9 @@ CORS ne s'applique qu'aux requêtes JavaScript cross-origin. Le flux devient :
    déjà rempli dans le corps (`src/publish.js`).
 3. L'utilisateur clique → arrive sur `github.com`, déjà connecté à **son
    propre compte**, jamais au nôtre → relit → clique "Submit new issue".
-4. `process-submission.yml`, déclenché par `issues: opened`, lit le corps,
-   revalide tout exactement comme avant (recalcul de `canonical_key`, jamais
-   fait confiance à ce que contient l'issue), et met à jour le graphe.
+4. `process-submission.yml`, déclenché par `issues: opened`, lit `text`
+   (seul champ retenu, tout le reste du bloc JSON est ignoré), en extrait
+   sa propre structure sémantique côté serveur, et met à jour le graphe.
 
 Zéro compte à créer côté app, zéro token dans le navigateur, zéro CORS, zéro
 composant serveur à déployer en dehors de GitHub lui-même. Le seul coût :
@@ -72,7 +102,8 @@ contrainte technique.
 
 ## Mise en place
 
-1. **Configurer le dépôt cible** dans `src/publish.js` : `OWNER`, `REPO`.
+1. **Configurer le dépôt cible** dans `src/config.js` : `OWNER`, `REPO`
+   (déjà réglé sur `theodoreyong9`/`SGD` dans cette livraison).
 2. **Activer GitHub Pages** sur ce dépôt (Settings → Pages → Source: GitHub
    Actions). Le workflow `deploy.yml` s'en charge à chaque push sur `main`.
 3. **Permissions Actions** : Settings → Actions → General → Workflow
@@ -89,11 +120,15 @@ contrainte technique.
   `actions/github-script` (jamais interpolé dans une chaîne shell — c'est
   le vecteur d'injection classique de `${{ github.event.issue.body }}` dans
   un bloc `run:`) puis le passer à `validate-submission.mjs`, qui ne fait
-  que `JSON.parse` + vérification de schéma.
-- `canonical_key` n'est jamais fait confiance venant du client : recalculé
-  côté CI à partir du contenu structuré, de façon déterministe. N'importe
-  qui peut modifier le bloc JSON pré-rempli avant de cliquer "Submit" — le
-  protocole n'a jamais dépendu de ça pour son intégrité.
+  que `JSON.parse` + vérification de schéma sur `text` seul.
+- **`semantic` et `canonical_key` ne sont plus des champs que le client
+  peut influencer.** Ce n'est plus seulement "revérifié" : ces champs ne
+  sont même plus lus depuis l'issue. Le serveur extrait sa propre
+  structure à partir de `text` seul (`scripts/semantic-extract.mjs`) et en
+  dérive lui-même `canonical_key`. Un bloc `semantic` fabriqué à la main,
+  sans rapport avec `text` mais interne-cohérent — la faille qu'une
+  simple revérification de hash ne pouvait pas fermer — n'a plus d'effet
+  du tout : il est ignoré.
 - Aucun code d'un tiers n'est jamais exécuté par la CI (pas d'équivalent
   `pull_request_target` checkoutant du code externe — il n'y a plus de PR
   du tout dans ce flux).
@@ -118,10 +153,17 @@ contrainte technique.
   de stocker une identité de contributeur par nœud, ce que ce design évite
   délibérément (le score d'un nœud ne dépend jamais de qui l'a écrit).
   Laissé en l'état, en connaissance de cause.
-- **Qualité de l'extraction sémantique.** Le modèle utilisé
-  (`Llama-3.2-1B-Instruct`) est volontairement petit pour tourner sur des
-  machines modestes ; un modèle plus gros donnera une meilleure structuration
-  au prix d'un téléchargement et d'un temps d'inférence plus longs.
+- **Qualité de l'extraction sémantique serveur.** Le modèle utilisé par
+  `scripts/semantic-extract.mjs` (`Xenova/TinyLlama-1.1B-Chat-v1.0`,
+  compatible ONNX/transformers.js) n'a **pas pu être validé en conditions
+  réelles** au moment où ce pipeline a été écrit — la disponibilité et le
+  comportement exact des modèles de génération de texte avec
+  transformers.js évoluent vite, et ce choix n'a été vérifié que sur sa
+  logique de parsing/repli, pas sur une véritable génération. Si
+  l'extraction échoue systématiquement en production (le repli minimal se
+  déclenchant à chaque soumission), commencez par ce nom de modèle. Le
+  repli minimal garantit que le pipeline avance toujours, au prix de
+  nœuds peu informatifs en attendant.
 - **Le rate-limiting par compte est un disjoncteur, pas une preuve
   d'humanité.** Il protège contre un seul compte qui inonde la file plus
   vite que le rendement décroissant ne peut absorber, pas contre la
@@ -129,8 +171,14 @@ contrainte technique.
 
 ## Fonctionnalités implémentées
 
-- **Canonicalisation déterministe** (`scripts/canonical.mjs`), re-vérifiée
-  côté CI, jamais fait confiance au client.
+- **Extraction sémantique côté serveur** (`scripts/semantic-extract.mjs`) :
+  seule source de vérité pour la structure d'une proposition, calculée à
+  partir du seul `text` soumis — jamais d'un bloc `semantic` client. Voir
+  "Pourquoi l'extraction sémantique tourne maintenant côté serveur"
+  ci-dessus.
+- **Canonicalisation déterministe** (`scripts/canonical.mjs`), appliquée à
+  la structure extraite côté serveur ci-dessus, jamais à une structure
+  déclarée par le client.
 - **Rendement marginal décroissant** (`1/n`) sur les soumissions répétées
   d'une même proposition canonique.
 - **Embeddings sémantiques réels** (`all-MiniLM-L6-v2` via transformers.js,
@@ -171,27 +219,27 @@ contrainte technique.
   distincte des relations affirmées. Avant ce changement, deux paraphrases
   restaient visuellement sans lien entre elles malgré une proximité
   sémantique forte.
-- **Normalisation du domaine et des relations côté client**
+- **Normalisation du domaine et des relations dans l'aperçu client**
   (`src/semantic.js`) : le petit modèle local (`Llama-3.2-1B-Instruct`) ne
   respecte pas toujours à la lettre la consigne d'enum fermé — il peut
   produire une phrase libre au lieu d'une des dix valeurs de `domaine`
-  attendues. Cette valeur est désormais normalisée et ramenée à `autre` si
-  elle ne correspond à rien de connu, *avant* la construction du lien de
-  soumission, plutôt que de laisser l'utilisateur découvrir le rejet après
-  un aller-retour complet sur GitHub. Une relation dont le type est
-  hors-liste est abandonnée plutôt que requalifiée au hasard.
+  attendues. Cette valeur est normalisée et ramenée à `autre` si elle ne
+  correspond à rien de connu. Purement cosmétique depuis que l'extraction
+  serveur est indépendante (`scripts/semantic-extract.mjs` applique le
+  même clamp de son côté, séparément) : ça évite juste un aperçu
+  incohérent avant publication, ça n'affecte plus rien côté identité.
 - **Suivi de soumission côté client** (`src/tracker.js`, panneau "Vos
   soumissions") : le flux Issues ne renvoie aucune notification vers le
   site une fois l'utilisateur reparti sur GitHub. Ce module retient
-  localement (`localStorage`, pas de compte) ce que l'utilisateur a préparé
-  et vérifie son statut de deux façons : instantanément si le
-  `canonical_key` apparaît déjà dans `data/graph.json` rechargé, sinon via
-  l'API Search publique de GitHub (limitée à 10 req/min sans
-  authentification — pas de polling automatique en boucle, seulement au
-  chargement et sur clic explicite). Dès qu'une soumission suivie est
-  détectée dans le graphe, son nœud est automatiquement mis en évidence et
-  sa région affichée — pas besoin de relancer une recherche manuelle pour
-  voir sa propre contribution apparaître.
+  localement (`localStorage`, pas de compte) un identifiant de
+  corrélation généré côté client (`ref`, sans aucun rôle protocolaire) et
+  interroge l'API Search publique de GitHub pour retrouver l'Issue
+  correspondante (limitée à 10 req/min sans authentification — pas de
+  polling automatique en boucle, seulement au chargement et sur clic
+  explicite). Une fois l'Issue acceptée, le VRAI `canonical_key` — celui
+  que le serveur a calculé, jamais deviné côté client — est extrait du
+  commentaire de clôture posté par le workflow, puis utilisé pour mettre
+  en évidence le nœud correspondant dans le graphe dès qu'il y apparaît.
 - **Recherche pure, séparée de la soumission** (bouton "Rechercher") :
   consulte le graphe par similarité d'embedding sur le texte brut de la
   requête, sans passer par le modèle génératif WebLLM (`src/semantic.js`,
@@ -222,6 +270,14 @@ contrainte technique.
 
 ## Limites connues
 
+- **Modèle d'extraction serveur non vérifié en conditions réelles, et
+  latence associée.** Voir "Modèle de sécurité" ci-dessus — le choix de
+  modèle dans `scripts/semantic-extract.mjs` est un point à surveiller en
+  priorité si le pipeline se rabat systématiquement sur l'extraction
+  minimale. Chaque soumission prend désormais potentiellement plusieurs
+  dizaines de secondes à traiter (génération CPU), contre quelques
+  centaines de millisecondes avant ce changement (qui ne calculait qu'un
+  embedding côté serveur, jamais de génération de texte).
 - **Seuil des arêtes `similaire` non calibré empiriquement.** 0.72 est un
   choix raisonnable mais arbitraire, posé sans jeu de données réel pour le
   valider — à ajuster une fois qu'il y aura assez de soumissions pour

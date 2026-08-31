@@ -1,11 +1,18 @@
 // Deterministic canonicalization: Canonical(S) = Hash(Encode(Normalize(S)))
-// This file has NO dependency on any AI output. It only operates on the
-// structured semantic representation {concepts, relations, objective, means, domain}
-// that the client already extracted. Determinism here is what lets the CI
-// re-verify a client's claimed canonical_key without trusting the client's AI.
+// This file has NO dependency on any AI output itself — it only operates on
+// the structured semantic representation {concepts, relations, objective,
+// means, domain} it is given. What changed since this file was first
+// written: S now comes from scripts/semantic-extract.mjs's OWN extraction
+// of the submitted text, run server-side — never from a client-submitted
+// structure. This function's determinism is what lets identical text
+// produce the same canonical_key across resubmissions, even though the
+// server's own LLM extraction isn't guaranteed to be byte-identical run to
+// run; Normalize() absorbs small formatting drift (case, accents,
+// whitespace, field order) but not genuine content drift.
 //
-// Used both by scripts/validate-submission.mjs (Node, on CI) and mirrored by
-// src/semantic.js (browser) — keep the two in sync if you change this file.
+// Used by scripts/semantic-extract.mjs (identity) and mirrored by
+// src/semantic.js in the browser (for the non-authoritative live preview
+// only) — keep the two in sync if you change this file.
 
 import { createHash } from "node:crypto";
 
