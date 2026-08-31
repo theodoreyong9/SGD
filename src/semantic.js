@@ -43,9 +43,36 @@ ces clés :
   "relations": [{"type": "un des: implique|contredit|complete|generalise|specialise|alternative_a|depend_de", "target_hint": "concept ou proposition visée, texte court"}],
   "objectif": "ce que la proposition cherche à obtenir, une phrase courte",
   "moyen": "le moyen concret proposé, une phrase courte",
-  "domaine": "un domaine parmi: environnement|transport|energie|sante|education|economie|technologie|international|social|autre"
+  "domaine": "un des mots EXACTS suivants, rien d'autre: environnement, transport, energie, sante, education, economie, technologie, international, social, autre"
 }
 Ne produis rien d'autre que ce JSON.`;
+
+// Ces deux listes DOIVENT rester synchronisées avec celles de
+// scripts/validate-submission.mjs (source de vérité côté serveur). Un
+// petit modèle local comme Llama-3.2-1B-Instruct ne respecte pas toujours
+// une consigne d'enum fermé à la lettre — il peut renvoyer une phrase
+// libre ("la consommation de bonbons gratuits") au lieu d'une des valeurs
+// attendues. Plutôt que de laisser une valeur invalide voyager jusqu'à
+// l'Issue GitHub pour se faire rejeter côté serveur — un aller-retour
+// complet pour rien — on la corrige ici, tout de suite, avant même
+// d'afficher un résultat à l'utilisateur.
+const ALLOWED_DOMAINS = new Set([
+  "environnement", "transport", "energie", "sante", "education",
+  "economie", "technologie", "international", "social", "autre",
+]);
+const ALLOWED_RELATION_TYPES = new Set([
+  "implique", "contredit", "complete", "generalise", "specialise",
+  "alternative_a", "depend_de",
+]);
+
+function normalizeEnum(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_");
+}
 
 // parseWithAI(text) -> { concepts, relations, objective, means, domain }
 export async function parseWithAI(text) {
@@ -64,12 +91,25 @@ export async function parseWithAI(text) {
   if (!jsonMatch) throw new Error("Le modèle n'a pas produit de JSON exploitable.");
   const parsed = JSON.parse(jsonMatch[0]);
 
+  const domainCandidate = normalizeEnum(parsed.domaine);
+  const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "autre";
+
+  const relations = (parsed.relations || [])
+    .map((r) => ({
+      type: normalizeEnum(r?.type),
+      target_hint: r?.target_hint || "",
+    }))
+    // Une relation dont le type est hors-liste est abandonnée plutôt que
+    // requalifiée au hasard : le modèle n'a produit qu'un type sur les 7
+    // permis, on ne peut pas deviner lequel il voulait dire.
+    .filter((r) => ALLOWED_RELATION_TYPES.has(r.type) && r.target_hint);
+
   return {
     concepts: parsed.concepts || [],
-    relations: parsed.relations || [],
+    relations,
     objective: parsed.objectif || "",
     means: parsed.moyen || "",
-    domain: parsed.domaine || "autre",
+    domain,
   };
 }
 

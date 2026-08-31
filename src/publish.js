@@ -25,8 +25,7 @@
 // pour ça que rien dans ce fichier n'est jamais fait confiance côté
 // serveur — canonical_key est toujours recalculé à partir de zéro.
 
-const OWNER = "theodoreyong9";
-const REPO = "SGD";
+import { OWNER, REPO } from "./config.js";
 
 // Marqueur invisible utilisé par le workflow pour distinguer une Issue de
 // soumission SGD de n'importe quelle autre Issue ouverte sur le dépôt

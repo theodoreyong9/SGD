@@ -43,14 +43,27 @@
     <p class="publish-copy">
       Aucun compte à créer ici. Vous allez ouvrir une Issue GitHub
       pré-remplie sur votre propre compte : relisez-la, puis cliquez
-      « Submit new issue » sur GitHub pour publier réellement votre
-      proposition. Le contenu sera revalidé et recalculé côté serveur.
+      « Submit new issue » <strong>sur GitHub</strong> pour publier
+      réellement votre proposition — ouvrir cette page ne suffit pas.
+      Revenez ensuite ici, cet onglet suit automatiquement le traitement.
     </p>
     <a id="publish-link" class="publish-button" href="#" target="_blank" rel="noopener">
       Ouvrir l'Issue de soumission sur GitHub →
     </a>
+    <p id="publish-status" class="publish-status" aria-live="polite"></p>
   </div>
 </main>
+
+<aside id="tracker-panel" class="tracker-panel hidden">
+  <div class="tracker-header">
+    <span>Vos soumissions</span>
+    <button id="tracker-refresh" class="tracker-refresh">Actualiser</button>
+  </div>
+  <p class="tracker-note">
+    Suivi propre à ce navigateur — GitHub reste la seule source de vérité.
+  </p>
+  <ul id="tracker-list" class="tracker-list"></ul>
+</aside>
 
 <footer class="corner-note">
   <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations

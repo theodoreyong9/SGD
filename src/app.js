@@ -3,6 +3,7 @@ import { parseWithAI, canonicalKey, isWebGPUAvailable } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
+import { recordSubmission, getTracked, refreshAllPending, setStatus as setTrackedStatus, dismissTracked } from "./tracker.js";
 
 const canvas = document.getElementById("graph-canvas");
 const renderer = createGraphRenderer(canvas);
@@ -13,6 +14,7 @@ const submitButton = document.getElementById("submit-button");
 const statusLine = document.getElementById("status-line");
 const publishPanel = document.getElementById("publish-panel");
 const publishLink = document.getElementById("publish-link");
+const publishStatus = document.getElementById("publish-status");
 const resultPanel = document.getElementById("result-panel");
 const resultDomain = document.getElementById("result-domain");
 const resultConcepts = document.getElementById("result-concepts");
@@ -23,6 +25,9 @@ const edgeCountEl = document.getElementById("edge-count");
 const focusPill = document.getElementById("focus-pill");
 const focusLabel = document.getElementById("focus-label");
 const focusClear = document.getElementById("focus-clear");
+const trackerPanel = document.getElementById("tracker-panel");
+const trackerList = document.getElementById("tracker-list");
+const trackerRefresh = document.getElementById("tracker-refresh");
 
 let graph = { nodes: [], edges: [] };
 let lastParsed = null; // { text, semantic, key }
@@ -33,6 +38,22 @@ async function loadGraph() {
   renderer.setData(graph);
   nodeCountEl.textContent = graph.nodes.length;
   edgeCountEl.textContent = graph.edges.length;
+  reconcileTrackedWithGraph();
+}
+
+// Dès que le graphe rechargé contient déjà le canonical_key d'une
+// soumission suivie, on la marque "accepted" localement, sans attendre
+// l'API GitHub — le signal le plus rapide et le plus fiable qu'on ait,
+// puisqu'il vient directement du graphe publié.
+function reconcileTrackedWithGraph() {
+  let changed = false;
+  for (const t of getTracked()) {
+    if (t.status !== "accepted" && graph.nodes.some((n) => n.id === t.key)) {
+      setTrackedStatus(t.key, { status: "accepted" });
+      changed = true;
+    }
+  }
+  if (changed) renderTracker();
 }
 
 function setStatus(msg) {
@@ -142,6 +163,11 @@ async function showResult({ semantic, key }) {
     const url = buildSubmissionIssueUrl(lastParsed);
     publishLink.href = url;
     publishPanel.classList.remove("hidden");
+    publishLink.onclick = () => {
+      recordSubmission({ key: lastParsed.key, text: lastParsed.text, domain: lastParsed.semantic.domain });
+      publishStatus.textContent = "Enregistrée dans « Vos soumissions » ci-dessous — cliquez « Submit new issue » sur GitHub pour la publier réellement.";
+      renderTracker();
+    };
   } catch (err) {
     if (err instanceof SubmissionTooLargeError) {
       setStatus(err.message);
@@ -151,6 +177,66 @@ async function showResult({ semantic, key }) {
     }
   }
 }
+
+const STATUS_LABELS = {
+  pending: "En attente sur GitHub",
+  accepted: "Intégrée au graphe ✓",
+  rejected: "Rejetée ✕",
+  unknown: "Statut inconnu",
+};
+
+function truncate(str, n) {
+  return str.length > n ? str.slice(0, n - 1) + "…" : str;
+}
+
+function renderTracker() {
+  const tracked = getTracked();
+  if (tracked.length === 0) {
+    trackerPanel.classList.add("hidden");
+    return;
+  }
+  trackerPanel.classList.remove("hidden");
+  trackerList.innerHTML = tracked
+    .map((t) => {
+      const reasonLine =
+        t.status === "rejected" && t.reason
+          ? `<div class="tracker-reason">${escapeHtml(t.reason)}</div>`
+          : "";
+      const link = t.issue_url
+        ? `<a href="${t.issue_url}" target="_blank" rel="noopener" class="tracker-link">Voir l'issue →</a>`
+        : "";
+      return `
+        <li class="tracker-item tracker-${t.status}">
+          <div class="tracker-text">${escapeHtml(truncate(t.text, 60))}</div>
+          <div class="tracker-status">${STATUS_LABELS[t.status] || t.status}</div>
+          ${reasonLine}
+          ${link}
+          <button class="tracker-dismiss" data-key="${t.key}" aria-label="Retirer du suivi">✕</button>
+        </li>`;
+    })
+    .join("");
+}
+
+trackerList.addEventListener("click", (e) => {
+  const key = e.target.closest(".tracker-dismiss")?.dataset.key;
+  if (key) {
+    dismissTracked(key);
+    renderTracker();
+  }
+});
+
+trackerRefresh.addEventListener("click", async () => {
+  trackerRefresh.disabled = true;
+  trackerRefresh.textContent = "Actualisation…";
+  try {
+    await refreshAllPending();
+    reconcileTrackedWithGraph();
+    renderTracker();
+  } finally {
+    trackerRefresh.disabled = false;
+    trackerRefresh.textContent = "Actualiser";
+  }
+});
 
 function escapeHtml(str) {
   const div = document.createElement("div");
@@ -166,6 +252,7 @@ form.addEventListener("submit", async (e) => {
   submitButton.disabled = true;
   resultPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
+  publishStatus.textContent = "";
 
   try {
     if (!isWebGPUAvailable()) {
@@ -218,4 +305,10 @@ function clearFocus() {
 
 focusClear.addEventListener("click", clearFocus);
 
-loadGraph();
+renderTracker();
+loadGraph().then(() => {
+  refreshAllPending().then(() => {
+    reconcileTrackedWithGraph();
+    renderTracker();
+  });
+});
