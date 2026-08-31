@@ -215,6 +215,72 @@ html, body {
   line-height: 1.7;
 }
 
+.breakdown {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(232, 227, 216, 0.12);
+}
+
+.breakdown-total {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  color: var(--accent-agree);
+  margin-bottom: 8px;
+}
+
+.breakdown-row {
+  display: grid;
+  grid-template-columns: 140px 1fr 32px;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.breakdown-bar {
+  display: block;
+  height: 4px;
+  background: rgba(232, 227, 216, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.breakdown-bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent-agree);
+}
+
+.breakdown-val {
+  text-align: right;
+}
+
+.synth-button {
+  margin-top: 14px;
+  background: none;
+  border: 1px solid rgba(232, 227, 216, 0.2);
+  color: var(--text-muted);
+  border-radius: var(--r);
+  padding: 7px 12px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.synth-button:hover {
+  border-color: var(--accent-agree);
+  color: var(--accent-agree);
+}
+
+.synth-output {
+  margin-top: 10px;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--text);
+  font-style: italic;
+}
+
 .corner-note {
   position: fixed;
   bottom: 18px;

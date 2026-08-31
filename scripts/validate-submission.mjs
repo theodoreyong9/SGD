@@ -104,7 +104,42 @@ if (!submission.canonical_key || typeof submission.canonical_key !== "string") {
 
 if (reasons.length) fail(reasons);
 
-// 3. Re-derive the canonical key deterministically — the AI-produced structure
+// 3. Rate-limit by GitHub account. This is NOT a Sybil-proofing mechanism —
+// creating accounts is cheap — it only protects against a single compromised
+// or automated account flooding the queue faster than the diminishing-return
+// scoring can absorb it (section 31: canonicalisation + rendement décroissant
+// already do the heavy lifting; this is a coarse circuit breaker on top).
+const MAX_SUBMISSIONS_PER_DAY = 30;
+const author = process.env.PR_AUTHOR;
+const token = process.env.GITHUB_TOKEN;
+const repo = process.env.GITHUB_REPOSITORY; // "owner/name", set by Actions
+
+if (author && token && repo) {
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const query = encodeURIComponent(
+    `repo:${repo} type:pr author:${author} created:>=${since}`
+  );
+  const res = await fetch(`https://api.github.com/search/issues?q=${query}`, {
+    headers: {
+      Authorization: `token ${token}`,
+      Accept: "application/vnd.github+json",
+    },
+  });
+  if (res.ok) {
+    const data = await res.json();
+    if (data.total_count > MAX_SUBMISSIONS_PER_DAY) {
+      fail([
+        `limite de fréquence atteinte pour ${author}: ${data.total_count} soumissions dans les dernières 24h (max ${MAX_SUBMISSIONS_PER_DAY})`,
+      ]);
+    }
+  } else {
+    console.warn("Vérification du rate-limit ignorée (échec API):", res.status);
+  }
+} else {
+  console.warn("Contexte d'auteur/token absent — rate-limit non vérifié (probablement un test local).");
+}
+
+// 4. Re-derive the canonical key deterministically — the AI-produced structure
 // is trusted for CONTENT, but identity/dedup NEVER depends on the client's
 // self-reported hash. This is section 8 & 35 of the spec made literal.
 const recomputed = canonicalKey({

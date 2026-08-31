@@ -85,24 +85,51 @@ le plus proche du "100% statique" sans les recréer.
 - **Unicité humaine.** Un compte GitHub a un coût pour être créé en masse,
   mais ce n'est pas une preuve d'humanité. Si vous avez besoin de cette
   garantie, il faut un mécanisme externe (voir section 32 du document).
-- **Qualité du matching sémantique.** `process-graph.mjs` relie les
-  relations à des nœuds existants par recouvrement de mots-clés, pas par
-  similarité d'embeddings — c'est volontairement simple pour rester
-  dépendance-libre. Deux paraphrases très différentes lexicalement du même
-  concept peuvent produire des `concepts` différents et donc ne pas se
-  canonicaliser ensemble. Une vraie mise en production voudrait des
-  embeddings (calculables aussi côté client avec WebLLM) comparés par
-  similarité cosinus plutôt qu'un simple Jaccard sur des mots-clés.
 - **Qualité de l'extraction sémantique.** Le modèle utilisé
   (`Llama-3.2-1B-Instruct`) est volontairement petit pour tourner sur des
   machines modestes ; un modèle plus gros donnera une meilleure structuration
   au prix d'un téléchargement et d'un temps d'inférence plus longs.
+- **Le rate-limiting par compte est un disjoncteur, pas une preuve
+  d'humanité.** Il protège contre un seul compte qui inonde la file plus
+  vite que le rendement décroissant ne peut absorber, pas contre la
+  création massive de comptes (voir section 32).
+
+## Fonctionnalités implémentées
+
+- **Canonicalisation déterministe** (`scripts/canonical.mjs`), re-vérifiée
+  côté CI, jamais fait confiance au client.
+- **Rendement marginal décroissant** (`1/n`) sur les soumissions répétées
+  d'une même proposition canonique.
+- **Embeddings sémantiques réels** (`all-MiniLM-L6-v2` via transformers.js,
+  CPU/WASM) pour la nouveauté et le matching de relations — remplace le
+  recouvrement de mots-clés. Deux paraphrases lexicalement très différentes
+  du même contenu sont maintenant reconnues comme proches. Le modèle tourne
+  aussi côté client (`src/embeddings.js`, WASM) pour l'aperçu avant
+  publication, mais seule la version serveur (`scripts/embeddings.mjs`,
+  après merge) fait autorité — cohérent avec la séparation IA/protocole de
+  la section 35 : cet aperçu n'est jamais une garantie, juste une UX.
+- **Score de pont entre domaines** (`bridge`, approximation de la section 21)
+  et **stabilité temporelle** (`stability`, section 29), tous deux stockés
+  et recalculés à chaque mise à jour du graphe.
+- **Décomposition de l'influence visible** (section 37) : chaque nœud
+  expose `stats.breakdown = {novelty, contribution, bridge, stability,
+  influence}`, affiché sous forme de barres dans l'interface.
+- **Synthèse par IA d'un sous-graphe** (section 25) : bouton "Synthétiser"
+  qui invoque le modèle WebLLM déjà chargé sur l'ensemble des propositions
+  d'un domaine — vue dérivée générée à la demande, jamais stockée comme
+  donnée de référence.
+- **Rate-limiting par compte GitHub** (30 PR/24h par défaut, ajustable dans
+  `scripts/validate-submission.mjs`), vérifié via l'API Search de GitHub
+  avec le token en lecture seule du workflow non privilégié.
 
 ## Ce qui reste à construire pour une vraie mise en production
 
-- Rate limiting par compte GitHub (ex. via un compteur dans
-  `validate-submission.mjs` qui interroge l'historique des PR de l'auteur).
-- Embeddings pour la canonicalisation et le matching de relations.
-- Une vue "synthèse par IA" d'un sous-graphe (section 25 du document) —
-  non implémentée ici, le graphe brut est affiché tel quel.
-- Décomposition de score visible à l'utilisateur (section 37).
+- Une vraie preuve d'unicité humaine si le protocole doit un jour en
+  dépendre (aujourd'hui volontairement absent, voir section 32).
+- Pagination/limite d'affichage du graphe côté client au-delà de quelques
+  milliers de nœuds (le rendu `canvas` en `graph-render.js` est O(n²) sur
+  les répulsions, à remplacer par un quadtree si le graphe grossit
+  significativement).
+- Un vrai stockage des embeddings en format binaire compact plutôt qu'un
+  tableau JSON de 384 flottants par nœud si `data/graph.json` devient
+  volumineux.

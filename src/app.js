@@ -1,5 +1,7 @@
 import { createGraphRenderer } from "./graph-render.js";
 import { parseWithAI, canonicalKey, isWebGPUAvailable } from "./semantic.js";
+import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
+import { synthesizeSubgraph } from "./synthesis.js";
 import { startDeviceFlow, getStoredToken, signOut } from "./oauth.js";
 import { submitProposal } from "./github-api.js";
 
@@ -36,19 +38,16 @@ function setStatus(msg) {
   statusLine.textContent = msg;
 }
 
-function jaccard(a, b) {
-  const setA = new Set(a);
-  const setB = new Set(b);
-  const inter = [...setA].filter((x) => setB.has(x)).length;
-  const union = new Set([...setA, ...setB]).size;
-  return union === 0 ? 0 : inter / union;
-}
-
-function findClosestNode(concepts) {
+// Real embedding similarity for the live preview (mirrors scripts/embeddings.mjs
+// server-side; see src/embeddings.js for why this copy is UX-only, not authoritative).
+async function findClosestNode(semantic) {
+  if (graph.nodes.length === 0) return { node: null, similarity: 0 };
+  const queryEmbedding = await embed(textForEmbedding(semantic));
   let best = null;
   let bestScore = 0;
   for (const n of graph.nodes) {
-    const score = jaccard(concepts, n.semantic.concepts);
+    if (!n.embedding) continue;
+    const score = cosineSimilarity(queryEmbedding, n.embedding);
     if (score > bestScore) {
       bestScore = score;
       best = n;
@@ -57,9 +56,31 @@ function findClosestNode(concepts) {
   return { node: best, similarity: bestScore };
 }
 
-function showResult({ semantic, key }) {
+function renderBreakdown(node) {
+  if (!node?.stats?.breakdown) return "";
+  const b = node.stats.breakdown;
+  const rows = [
+    ["Nouveauté", b.novelty],
+    ["Répétition (décroissante)", b.contribution],
+    ["Pont entre domaines", b.bridge],
+    ["Stabilité", b.stability],
+  ];
+  const bars = rows
+    .map(
+      ([label, val]) =>
+        `<div class="breakdown-row">
+           <span class="breakdown-label">${label}</span>
+           <span class="breakdown-bar"><span style="width:${Math.min(100, val * 2.5)}%"></span></span>
+           <span class="breakdown-val">${val}</span>
+         </div>`
+    )
+    .join("");
+  return `<div class="breakdown"><div class="breakdown-total">Influence : ${b.influence}</div>${bars}</div>`;
+}
+
+async function showResult({ semantic, key }) {
   const exactMatch = graph.nodes.find((n) => n.id === key);
-  const { node: closest, similarity } = findClosestNode(semantic.concepts);
+  const { node: closest, similarity } = await findClosestNode(semantic);
 
   resultDomain.textContent = semantic.domain;
   resultConcepts.innerHTML = semantic.concepts
@@ -67,18 +88,22 @@ function showResult({ semantic, key }) {
     .join("");
 
   const lines = [];
+  let breakdownNode = null;
+
   if (exactMatch) {
     lines.push(
       `Cette formulation correspond déjà à une proposition existante (${exactMatch.stats.participants} participations, contribution marginale décroissante appliquée).`
     );
     renderer.setHighlight(exactMatch.id);
-  } else if (closest && similarity > 0.3) {
+    breakdownNode = exactMatch;
+  } else if (closest && similarity > 0.5) {
     lines.push(
-      `Idée proche à ${Math.round(similarity * 100)}% d'une proposition existante : « ${escapeHtml(
+      `Idée proche à ${Math.round(similarity * 100)}% (par similarité sémantique, pas par mots-clés) d'une proposition existante : « ${escapeHtml(
         closest.text
       )} ». Une nouvelle nuance sera tout de même enregistrée.`
     );
     renderer.setHighlight(closest.id);
+    breakdownNode = closest;
   } else {
     lines.push("Aucune proposition proche trouvée — ceci introduirait une idée nouvelle dans le graphe.");
     renderer.setHighlight(null);
@@ -88,7 +113,28 @@ function showResult({ semantic, key }) {
     lines.push(`→ ${rel.type.replace(/_/g, " ")} : ${escapeHtml(rel.target_hint)}`);
   }
 
-  resultRelations.innerHTML = lines.map((l) => `<div>${l}</div>`).join("");
+  resultRelations.innerHTML =
+    lines.map((l) => `<div>${l}</div>`).join("") + renderBreakdown(breakdownNode);
+
+  const domainNodes = graph.nodes.filter((n) => n.semantic.domain === semantic.domain);
+  if (domainNodes.length >= 2) {
+    resultRelations.innerHTML += `<button id="synth-btn" class="synth-button">Synthétiser les propositions du domaine « ${escapeHtml(
+      semantic.domain
+    )} » (${domainNodes.length})</button><div id="synth-output" class="synth-output"></div>`;
+    document.getElementById("synth-btn").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = "Synthèse en cours…";
+      const out = document.getElementById("synth-output");
+      try {
+        out.textContent = await synthesizeSubgraph(domainNodes);
+      } catch (err) {
+        out.textContent = `Erreur de synthèse: ${err.message}`;
+      } finally {
+        e.target.remove();
+      }
+    });
+  }
+
   resultPanel.classList.remove("hidden");
 
   const token = getStoredToken();
@@ -123,7 +169,7 @@ form.addEventListener("submit", async (e) => {
     lastParsed = { text, semantic, key };
 
     setStatus("");
-    showResult(lastParsed);
+    await showResult(lastParsed);
   } catch (err) {
     console.error(err);
     setStatus(`Erreur: ${err.message}`);

@@ -80,6 +80,19 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install dependencies
+        if: steps.verdict.outputs.valid == 'true'
+        run: npm ci --no-audit --no-fund
+
+      # The embedding model (~90MB) is downloaded once and cached; without
+      # this every merge would re-fetch it from huggingface.co.
+      - name: Cache embedding model
+        if: steps.verdict.outputs.valid == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .cache/transformers
+          key: transformers-all-MiniLM-L6-v2
+
       - name: Process graph (canonicalization, novelty, diminishing contribution)
         if: steps.verdict.outputs.valid == 'true'
         run: node scripts/process-graph.mjs
