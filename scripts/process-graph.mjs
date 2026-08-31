@@ -23,6 +23,15 @@ const PENDING_DIR = "submissions/pending";
 const PROCESSED_DIR = "submissions/processed";
 const EDGE_SIMILARITY_THRESHOLD = 0.55;
 
+// Seuil pour les arêtes "similaire" auto-générées (voir upsertSimilarityEdges
+// ci-dessous) — délibérément plus haut que EDGE_SIMILARITY_THRESHOLD. Ce
+// dernier sert à faire correspondre un `target_hint` (texte libre, souvent
+// court) à un concept existant ; celui-ci compare directement deux nœuds
+// entiers entre eux, un signal plus fort qui mérite une barre plus haute
+// pour ne capturer que de vraies quasi-paraphrases, pas une simple parenté
+// thématique.
+const SIMILARITY_EDGE_THRESHOLD = 0.72;
+
 // Influence weights (spec section 12): I(v) = alpha*N + beta*R + gamma*D + delta*P
 // None of these dominates by construction — see spec section 60.
 const WEIGHTS = { novelty: 0.4, contribution: 0.3, bridge: 0.2, stability: 0.1 };
@@ -118,6 +127,39 @@ async function upsertEdges(graph, node, submission) {
   }
 }
 
+// Arêtes "similaire" : jusqu'ici, la proximité sémantique entre deux nœuds
+// DISTINCTS (donc pas fusionnés par canonical_key) ne servait qu'au calcul
+// de `novelty` et à l'aperçu client "idée proche à X%" — rien n'en gardait
+// trace dans le graphe lui-même. Deux paraphrases qui ne partagent pas
+// exactement le même canonical_key restaient donc visuellement sans lien
+// entre elles dans data/graph.json, alors qu'elles devraient apparaître
+// connectées : c'est exactement le cas 2 du protocole (paraphrase → même
+// région sémantique, pas deux idées indépendantes).
+//
+// Contrairement aux arêtes de upsertEdges ci-dessus (issues d'une relation
+// affirmée par l'IA — implique, contredit, etc.), une arête "similaire" ne
+// s'accumule pas avec les répétitions : son poids reflète la proximité
+// ACTUELLE, pas un nombre d'assertions.
+async function upsertSimilarityEdges(graph, node) {
+  for (const other of graph.nodes) {
+    if (other.id === node.id || !other.embedding) continue;
+    const sim = cosineSimilarity(node.embedding, other.embedding);
+    if (sim < SIMILARITY_EDGE_THRESHOLD) continue;
+
+    // ID trié pour rester stable quel que soit l'ordre de traitement des
+    // deux nœuds — une seule arête par paire, jamais une dans chaque sens.
+    const [a, b] = [node.id, other.id].sort();
+    const edgeId = `${a}<->${b}:similaire`;
+    let edge = graph.edges.find((e) => e.id === edgeId);
+    if (!edge) {
+      edge = { id: edgeId, source: a, target: b, type: "similaire", weight: 1, similarity: round(sim) };
+      graph.edges.push(edge);
+    } else {
+      edge.similarity = round(sim); // la proximité peut légèrement dériver au réembedding
+    }
+  }
+}
+
 // Bridge (section 21): capacité d'un nœud à connecter des régions
 // sémantiques autrement peu connectées. Deux signaux, combinés à parts
 // égales:
@@ -137,9 +179,17 @@ async function upsertEdges(graph, node, submission) {
 //       réellement des idées qui ne se touchaient pas autrement. C'est
 //       l'approximation la plus proche de "pont entre régions" qui ne
 //       dépend pas de l'enum `domaine`.
+//
+// Les arêtes "similaire" (voir upsertSimilarityEdges) sont volontairement
+// EXCLUES du voisinage pris en compte ici : elles relient par définition
+// des nœuds proches les uns des autres, donc les inclure ferait mécaniquement
+// baisser la dispersion moyenne — diluant le score de pont avec le signal
+// même qu'il est censé filtrer. `bridge` mesure des relations AFFIRMÉES
+// (implique, contredit, questionne, etc.), pas de la proximité de contenu.
 function computeBridgeScore(graph, node) {
   const neighborIds = new Set();
   for (const e of graph.edges) {
+    if (e.type === "similaire") continue;
     if (e.source === node.id) neighborIds.add(e.target);
     else if (e.target === node.id) neighborIds.add(e.source);
   }
@@ -240,6 +290,7 @@ async function main() {
     // Nothing reaches main without passing through that gate first.
     const node = await upsertNode(graph, submission);
     await upsertEdges(graph, node, submission);
+    await upsertSimilarityEdges(graph, node);
 
     renameSync(fullPath, join(PROCESSED_DIR, file));
     console.log(

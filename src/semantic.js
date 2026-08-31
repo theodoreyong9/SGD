@@ -40,11 +40,14 @@ collective, produis UNIQUEMENT un objet JSON (aucun texte autour) avec exactemen
 ces clés :
 {
   "concepts": [liste de 1 à 6 concepts courts en minuscules, noms communs],
-  "relations": [{"type": "un des: implique|contredit|complete|generalise|specialise|alternative_a|depend_de", "target_hint": "concept ou proposition visée, texte court"}],
+  "relations": [{"type": "un des: implique|contredit|complete|generalise|specialise|alternative_a|depend_de|questionne", "target_hint": "concept ou proposition visée, texte court"}],
   "objectif": "ce que la proposition cherche à obtenir, une phrase courte",
   "moyen": "le moyen concret proposé, une phrase courte",
   "domaine": "un des mots EXACTS suivants, rien d'autre: environnement, transport, energie, sante, education, economie, technologie, international, social, autre"
 }
+Utilise "questionne" quand la phrase pose une question sur un sujet sans
+prendre position ("Comment financer cette transition ?") — ce n'est ni un
+accord ni un désaccord, et ça doit rester distinguable des deux.
 Ne produis rien d'autre que ce JSON.`;
 
 // Ces deux listes DOIVENT rester synchronisées avec celles de
@@ -62,7 +65,7 @@ const ALLOWED_DOMAINS = new Set([
 ]);
 const ALLOWED_RELATION_TYPES = new Set([
   "implique", "contredit", "complete", "generalise", "specialise",
-  "alternative_a", "depend_de",
+  "alternative_a", "depend_de", "questionne",
 ]);
 
 function normalizeEnum(value) {

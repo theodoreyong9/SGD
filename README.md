@@ -130,13 +130,48 @@ contrainte technique.
   dont les voisins sont sémantiquement dispersés relie réellement des idées
   qui ne se touchaient pas autrement — indépendamment de l'étiquette de
   domaine choisie par le LLM à la soumission, qui reste un enum fermé de 10
-  valeurs et ne devrait donc pas porter tout le poids du score.
+  valeurs et ne devrait donc pas porter tout le poids du score. Les arêtes
+  `similaire` (voir plus bas) sont explicitement exclues de ce calcul, pour
+  ne pas diluer la dispersion avec des paraphrases proches.
 - **Stabilité par engagement, pas seulement par âge** (`stability`) : la
   persistance temporelle (âge/30 jours) plafonne désormais à 0.4 si la
   proposition n'a jamais été reprise, reliée ou contestée depuis sa première
   apparition. Le reste du score dépend de deux signaux structurels sans
   identité de contributeur : réapparitions au-delà de la première, et
   nombre d'arêtes accumulées.
+- **Moteur de relations élargi** : type `questionne`, en plus des sept
+  d'origine (`implique`, `contredit`, `complete`, `generalise`,
+  `specialise`, `alternative_a`, `depend_de`), pour les contributions qui
+  posent une question sans prendre position — le cas central du document
+  fondateur ("Comment financer cette transition ?"), qui n'avait
+  auparavant nulle part où aller dans le graphe.
+- **Arêtes `similaire` auto-générées** (`scripts/process-graph.mjs`,
+  `upsertSimilarityEdges`) : deux nœuds distincts (donc pas fusionnés par
+  `canonical_key`) dont les embeddings dépassent un seuil de proximité
+  élevé (0.72, volontairement plus haut que le seuil de correspondance
+  `target_hint` → concept) sont désormais reliés par une arête visible dans
+  `data/graph.json`, rendue en pointillés dans l'interface pour rester
+  distincte des relations affirmées. Avant ce changement, deux paraphrases
+  restaient visuellement sans lien entre elles malgré une proximité
+  sémantique forte.
+- **Normalisation du domaine et des relations côté client**
+  (`src/semantic.js`) : le petit modèle local (`Llama-3.2-1B-Instruct`) ne
+  respecte pas toujours à la lettre la consigne d'enum fermé — il peut
+  produire une phrase libre au lieu d'une des dix valeurs de `domaine`
+  attendues. Cette valeur est désormais normalisée et ramenée à `autre` si
+  elle ne correspond à rien de connu, *avant* la construction du lien de
+  soumission, plutôt que de laisser l'utilisateur découvrir le rejet après
+  un aller-retour complet sur GitHub. Une relation dont le type est
+  hors-liste est abandonnée plutôt que requalifiée au hasard.
+- **Suivi de soumission côté client** (`src/tracker.js`, panneau "Vos
+  soumissions") : le flux Issues ne renvoie aucune notification vers le
+  site une fois l'utilisateur reparti sur GitHub. Ce module retient
+  localement (`localStorage`, pas de compte) ce que l'utilisateur a préparé
+  et vérifie son statut de deux façons : instantanément si le
+  `canonical_key` apparaît déjà dans `data/graph.json` rechargé, sinon via
+  l'API Search publique de GitHub (limitée à 10 req/min sans
+  authentification — pas de polling automatique en boucle, seulement au
+  chargement et sur clic explicite).
 - **Décomposition de l'influence visible** : chaque nœud expose
   `stats.breakdown = {novelty, contribution, bridge, stability, influence}`,
   affiché sous forme de barres dans l'interface.
@@ -158,6 +193,17 @@ contrainte technique.
 
 ## Limites connues
 
+- **Seuil des arêtes `similaire` non calibré empiriquement.** 0.72 est un
+  choix raisonnable mais arbitraire, posé sans jeu de données réel pour le
+  valider — à ajuster une fois qu'il y aura assez de soumissions pour
+  observer si le graphe sur-connecte (seuil trop bas) ou sous-connecte
+  (trop haut) les paraphrases.
+- **Le 5ᵉ axe "diversité structurelle" (proposé dans les échanges de
+  conception, distinct de la nouveauté par le *contenu*) n'est pas
+  implémenté.** Ce qu'il capturerait précisément au-delà de `novelty` et
+  `bridge` reste à démontrer sur des cas réels avant de lui donner sa
+  propre formule — ajouté à la légère, il ferait probablement double
+  emploi.
 - **`domaine` reste un enum fermé, pas un espace émergent.** Le score
   `bridge` en dépend encore partiellement (voir plus haut) ; une vraie
   suite consisterait à clusteriser les embeddings eux-mêmes plutôt que de

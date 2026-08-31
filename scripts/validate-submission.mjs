@@ -25,7 +25,7 @@ const MAX_CONCEPTS = 20;
 const MAX_RELATIONS = 20;
 const ALLOWED_RELATION_TYPES = new Set([
   "implique", "contredit", "complete", "generalise", "specialise",
-  "alternative_a", "depend_de",
+  "alternative_a", "depend_de", "questionne",
 ]);
 const ALLOWED_DOMAINS = new Set([
   "environnement", "transport", "energie", "sante", "education",

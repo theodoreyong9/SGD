@@ -14,6 +14,13 @@ const COLORS = {
     alternative_a: "rgba(166, 86, 75, 0.4)",
     implique: "rgba(199, 154, 59, 0.45)",
     complete: "rgba(92, 122, 153, 0.45)",
+    questionne: "rgba(150, 120, 190, 0.45)",
+    // "similaire" est auto-généré à partir des embeddings (voir
+    // scripts/process-graph.mjs), pas une relation affirmée par un
+    // participant — rendu en pointillés, plus discret, pour rester
+    // visuellement distinct des arêtes que quelqu'un a explicitement
+    // voulu créer.
+    similaire: "rgba(232, 227, 216, 0.22)",
     default: "rgba(232, 227, 216, 0.15)",
   },
   node: "rgba(199, 154, 59, 0.85)",
@@ -167,10 +174,12 @@ export function createGraphRenderer(canvas) {
       ctx.strokeStyle = COLORS.edge[e.type] || COLORS.edge.default;
       ctx.lineWidth = Math.min(1 + e.weight * 0.4, 3);
       ctx.globalAlpha = dimmed ? DIMMED_ALPHA : 1;
+      if (e.type === "similaire") ctx.setLineDash([3, 5]);
       ctx.beginPath();
       ctx.moveTo(e.sourceNode.x, e.sourceNode.y);
       ctx.lineTo(e.targetNode.x, e.targetNode.y);
       ctx.stroke();
+      if (e.type === "similaire") ctx.setLineDash([]);
     }
     ctx.globalAlpha = 1;
 
