@@ -1,5 +1,12 @@
 // Minimal force-directed layout, dependency-free (fine for hundreds of nodes;
 // swap for a proper spatial index if the graph grows past a few thousand).
+//
+// Navigation à deux niveaux : "paysage" (tout le graphe, par défaut) et
+// "région" (un domaine sémantique mis en avant, le reste estompé). Cliquer
+// un nœud entre dans sa région ; le bouton de retour dans l'UI en sort.
+// Volontairement PAS un vrai niveau "sujet" (sous-graphe recalculé) —
+// voir README, section "Limites connues" — ceci reste un filtre visuel
+// sur le graphe existant, pas une nouvelle structure de données.
 
 const COLORS = {
   edge: {
@@ -11,8 +18,12 @@ const COLORS = {
   },
   node: "rgba(199, 154, 59, 0.85)",
   nodeHighlight: "#c79a3b",
+  nodeDimmed: "rgba(199, 154, 59, 0.18)",
   text: "rgba(232, 227, 216, 0.6)",
+  textDimmed: "rgba(232, 227, 216, 0.15)",
 };
+
+const DIMMED_ALPHA = 0.12;
 
 export function createGraphRenderer(canvas) {
   const ctx = canvas.getContext("2d");
@@ -20,7 +31,9 @@ export function createGraphRenderer(canvas) {
   let nodes = [];
   let edges = [];
   let highlightedId = null;
+  let focusDomain = null;
   let animationFrame = null;
+  let nodeClickHandler = null;
 
   function resize() {
     width = canvas.width = window.innerWidth * devicePixelRatio;
@@ -57,6 +70,46 @@ export function createGraphRenderer(canvas) {
   function setHighlight(id) {
     highlightedId = id;
   }
+
+  // setFocusDomain(domain | null): "région" view. Nodes outside `domain`
+  // are dimmed rather than removed, so the force simulation keeps running
+  // on the whole graph and nothing jumps when entering/leaving a region.
+  function setFocusDomain(domain) {
+    focusDomain = domain || null;
+  }
+
+  function nodeAt(clientX, clientY) {
+    for (let i = nodes.length - 1; i >= 0; i--) {
+      const n = nodes[i];
+      const dx = clientX - n.x;
+      const dy = clientY - n.y;
+      if (dx * dx + dy * dy <= (n.radius + 4) * (n.radius + 4)) return n;
+    }
+    return null;
+  }
+
+  function onNodeClick(handler) {
+    nodeClickHandler = handler;
+  }
+
+  canvas.addEventListener("click", (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const node = nodeAt(x, y);
+    nodeClickHandler?.(node);
+  });
+
+  canvas.addEventListener(
+    "mousemove",
+    (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      canvas.style.cursor = nodeAt(x, y) ? "pointer" : "default";
+    },
+    { passive: true }
+  );
 
   function tick() {
     const cx = window.innerWidth / 2;
@@ -102,28 +155,37 @@ export function createGraphRenderer(canvas) {
     }
   }
 
+  function inFocus(node) {
+    return !focusDomain || node.semantic.domain === focusDomain;
+  }
+
   function draw() {
     ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
 
     for (const e of edges) {
+      const dimmed = focusDomain && !(inFocus(e.sourceNode) && inFocus(e.targetNode));
       ctx.strokeStyle = COLORS.edge[e.type] || COLORS.edge.default;
       ctx.lineWidth = Math.min(1 + e.weight * 0.4, 3);
+      ctx.globalAlpha = dimmed ? DIMMED_ALPHA : 1;
       ctx.beginPath();
       ctx.moveTo(e.sourceNode.x, e.sourceNode.y);
       ctx.lineTo(e.targetNode.x, e.targetNode.y);
       ctx.stroke();
     }
+    ctx.globalAlpha = 1;
 
     for (const n of nodes) {
       const isHighlighted = n.id === highlightedId;
+      const dimmed = focusDomain && !inFocus(n) && !isHighlighted;
+
       ctx.beginPath();
       ctx.arc(n.x, n.y, isHighlighted ? n.radius * 1.6 : n.radius, 0, Math.PI * 2);
-      ctx.fillStyle = isHighlighted ? COLORS.nodeHighlight : COLORS.node;
-      ctx.globalAlpha = isHighlighted ? 1 : 0.75;
+      ctx.fillStyle = isHighlighted ? COLORS.nodeHighlight : dimmed ? COLORS.nodeDimmed : COLORS.node;
+      ctx.globalAlpha = dimmed ? DIMMED_ALPHA : isHighlighted ? 1 : 0.75;
       ctx.fill();
       ctx.globalAlpha = 1;
 
-      if (isHighlighted || n.radius > 8) {
+      if ((isHighlighted || n.radius > 8) && !dimmed) {
         ctx.fillStyle = COLORS.text;
         ctx.font = "12px 'IBM Plex Sans', sans-serif";
         ctx.fillText(truncate(n.text, 40), n.x + n.radius + 6, n.y + 4);
@@ -146,6 +208,8 @@ export function createGraphRenderer(canvas) {
   return {
     setData,
     setHighlight,
+    setFocusDomain,
+    onNodeClick,
     destroy: () => cancelAnimationFrame(animationFrame),
   };
 }

@@ -1,7 +1,10 @@
-// Runs AFTER a submission PR has been merged into main, in a privileged
-// workflow that never checks out untrusted PR code — only main, which by
-// this point has already passed validate-submission.mjs.
+// Runs AFTER validate-submission.mjs has written a validated file into
+// submissions/pending/, in the same privileged workflow step
+// (.github/workflows/process-submission.yml) — never on untrusted input
+// directly; the only thing this script ever reads from submissions/pending/
+// has already passed schema validation and canonical_key re-derivation.
 //
+
 // This is where sections 10-15, 21, and 37 of the spec become arithmetic:
 //   - repeated submissions of the same canonical proposition get a
 //     shrinking marginal contribution (R_P(n) = 1/n)
@@ -115,37 +118,91 @@ async function upsertEdges(graph, node, submission) {
   }
 }
 
-// Bridge/diversity (section 21, approximated): how many DISTINCT domains
-// this node is connected to via edges, in either direction. This
-// intentionally avoids tracking per-contributor identity (section 20's
-// literal "domain of contributors" would require storing who submitted
-// what, which this design deliberately does not do).
+// Bridge (section 21): capacité d'un nœud à connecter des régions
+// sémantiques autrement peu connectées. Deux signaux, combinés à parts
+// égales:
+//
+//   (a) diversité de DOMAINES déclarés parmi les voisins — le signal
+//       d'origine, gardé tel quel, mais volontairement plafonné en poids:
+//       `domaine` est une étiquette choisie par le LLM à la soumission
+//       (un enum fermé de 10 valeurs, voir semantic.js), pas une région
+//       émergente. Y faire reposer TOUT le score de pont reviendrait à
+//       figer une taxonomie a priori dans un protocole censé s'en passer.
+//
+//   (b) dispersion SÉMANTIQUE entre les voisins eux-mêmes (distance
+//       cosinus moyenne de leurs embeddings, deux à deux) — indépendant
+//       de toute étiquette déclarée. Un nœud dont les voisins sont déjà
+//       proches les uns des autres ne relie pas grand-chose ; un nœud
+//       dont les voisins sont dispersés dans l'espace sémantique relie
+//       réellement des idées qui ne se touchaient pas autrement. C'est
+//       l'approximation la plus proche de "pont entre régions" qui ne
+//       dépend pas de l'enum `domaine`.
 function computeBridgeScore(graph, node) {
-  const connectedDomains = new Set();
+  const neighborIds = new Set();
   for (const e of graph.edges) {
-    if (e.source === node.id) {
-      const t = findNode(graph, e.target);
-      if (t && t.semantic.domain !== node.semantic.domain) connectedDomains.add(t.semantic.domain);
-    } else if (e.target === node.id) {
-      const s = findNode(graph, e.source);
-      if (s && s.semantic.domain !== node.semantic.domain) connectedDomains.add(s.semantic.domain);
-    }
+    if (e.source === node.id) neighborIds.add(e.target);
+    else if (e.target === node.id) neighborIds.add(e.source);
   }
-  return Math.min(1, connectedDomains.size / 3); // saturates at 3 distinct domains
+  const neighbors = [...neighborIds].map((id) => findNode(graph, id)).filter(Boolean);
+
+  const connectedDomains = new Set(
+    neighbors.filter((n) => n.semantic.domain !== node.semantic.domain).map((n) => n.semantic.domain)
+  );
+  const domainDiversity = Math.min(1, connectedDomains.size / 3); // saturates at 3 distinct domains
+
+  let dispersion = 0;
+  const withEmbedding = neighbors.filter((n) => n.embedding);
+  if (withEmbedding.length >= 2) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < withEmbedding.length; i++) {
+      for (let j = i + 1; j < withEmbedding.length; j++) {
+        sum += 1 - cosineSimilarity(withEmbedding[i].embedding, withEmbedding[j].embedding);
+        count++;
+      }
+    }
+    // Cosine distance between paraphrases rarely exceeds ~0.65 in practice
+    // with this embedding model, so scale up before saturating at 1.
+    dispersion = count > 0 ? Math.min(1, (sum / count) * 1.5) : 0;
+  }
+
+  return 0.5 * domainDiversity + 0.5 * dispersion;
 }
 
-// Stability (section 29): how long the proposition has persisted and stayed
-// active in the graph, normalized to [0,1] over a 30-day horizon.
-function computeStabilityScore(node) {
+// Stability (section 29): pas seulement l'âge. Une proposition qui reste
+// simplement ASSISE sans que personne n'y revienne, ne la relie, ne la
+// reformule ou ne la conteste ne devrait pas atteindre la stabilité
+// maximale — la doctrine (section 29) parle explicitement de persistance
+// ET de validation structurelle continue. On combine donc :
+//
+//   - persistance : âge depuis la première apparition, normalisé sur 30
+//     jours (le signal d'origine, gardé).
+//   - engagement : deux signaux purement structurels, sans identité de
+//     contributeur — nombre de réapparitions de la même proposition
+//     canonique au-delà de la première (indépendant de la décroissance
+//     harmonique déjà appliquée à `contribution`), et nombre d'arêtes
+//     accumulées (être référencé par, ou référencer, d'autres nœuds).
+//
+// La persistance seule plafonne à 0.4 : une idée ne peut pas devenir
+// "stable" par le seul fait de rester inactive un mois. Il lui faut aussi
+// de l'engagement pour approcher 1.
+function computeStabilityScore(graph, node) {
   const ageMs = Date.now() - new Date(node.first_seen).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
-  return Math.min(1, ageDays / 30);
+  const persistence = Math.min(1, ageDays / 30);
+
+  const participationSignal = Math.min(1, (node.stats.participants - 1) / 4);
+  const edgeCount = graph.edges.filter((e) => e.source === node.id || e.target === node.id).length;
+  const connectionSignal = Math.min(1, edgeCount / 4);
+  const engagement = 0.5 * participationSignal + 0.5 * connectionSignal;
+
+  return persistence * (0.4 + 0.6 * engagement);
 }
 
 function computeInfluence(graph, node) {
   const contributionNorm = Math.min(1, node.stats.contribution / 5); // saturates around 5 harmonic units
   const bridge = computeBridgeScore(graph, node);
-  const stability = computeStabilityScore(node);
+  const stability = computeStabilityScore(graph, node);
 
   const breakdown = {
     novelty: round(node.stats.novelty * WEIGHTS.novelty * 100),

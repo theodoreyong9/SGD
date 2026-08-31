@@ -2,8 +2,7 @@ import { createGraphRenderer } from "./graph-render.js";
 import { parseWithAI, canonicalKey, isWebGPUAvailable } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
-import { startDeviceFlow, getStoredToken, signOut } from "./oauth.js";
-import { submitProposal } from "./github-api.js";
+import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
 
 const canvas = document.getElementById("graph-canvas");
 const renderer = createGraphRenderer(canvas);
@@ -12,9 +11,8 @@ const form = document.getElementById("submit-form");
 const input = document.getElementById("submit-input");
 const submitButton = document.getElementById("submit-button");
 const statusLine = document.getElementById("status-line");
-const authPanel = document.getElementById("auth-panel");
-const authButton = document.getElementById("auth-button");
-const authDeviceCode = document.getElementById("auth-device-code");
+const publishPanel = document.getElementById("publish-panel");
+const publishLink = document.getElementById("publish-link");
 const resultPanel = document.getElementById("result-panel");
 const resultDomain = document.getElementById("result-domain");
 const resultConcepts = document.getElementById("result-concepts");
@@ -22,6 +20,9 @@ const resultRelations = document.getElementById("result-relations");
 const resultClose = document.getElementById("result-close");
 const nodeCountEl = document.getElementById("node-count");
 const edgeCountEl = document.getElementById("edge-count");
+const focusPill = document.getElementById("focus-pill");
+const focusLabel = document.getElementById("focus-label");
+const focusClear = document.getElementById("focus-clear");
 
 let graph = { nodes: [], edges: [] };
 let lastParsed = null; // { text, semantic, key }
@@ -62,8 +63,8 @@ function renderBreakdown(node) {
   const rows = [
     ["Nouveauté", b.novelty],
     ["Répétition (décroissante)", b.contribution],
-    ["Pont entre domaines", b.bridge],
-    ["Stabilité", b.stability],
+    ["Pont sémantique", b.bridge],
+    ["Stabilité (persistance + usage)", b.stability],
   ];
   const bars = rows
     .map(
@@ -137,8 +138,18 @@ async function showResult({ semantic, key }) {
 
   resultPanel.classList.remove("hidden");
 
-  const token = getStoredToken();
-  authPanel.classList.toggle("hidden", !!token);
+  try {
+    const url = buildSubmissionIssueUrl(lastParsed);
+    publishLink.href = url;
+    publishPanel.classList.remove("hidden");
+  } catch (err) {
+    if (err instanceof SubmissionTooLargeError) {
+      setStatus(err.message);
+      publishPanel.classList.add("hidden");
+    } else {
+      throw err;
+    }
+  }
 }
 
 function escapeHtml(str) {
@@ -154,6 +165,7 @@ form.addEventListener("submit", async (e) => {
 
   submitButton.disabled = true;
   resultPanel.classList.add("hidden");
+  publishPanel.classList.add("hidden");
 
   try {
     if (!isWebGPUAvailable()) {
@@ -180,43 +192,30 @@ form.addEventListener("submit", async (e) => {
 
 resultClose.addEventListener("click", () => {
   resultPanel.classList.add("hidden");
+  publishPanel.classList.add("hidden");
   renderer.setHighlight(null);
 });
 
-authButton.addEventListener("click", async () => {
-  authButton.disabled = true;
-  try {
-    const { token, login } = await startDeviceFlow(({ userCode, verificationUri }) => {
-      authDeviceCode.innerHTML = `Code : <strong>${userCode}</strong><br/><a href="${verificationUri}" target="_blank" rel="noopener">${verificationUri}</a>`;
-      authDeviceCode.classList.remove("hidden");
-    });
-
-    authDeviceCode.classList.add("hidden");
-    authPanel.classList.add("hidden");
-    setStatus(`Connecté en tant que ${login}. Publication de la proposition…`);
-
-    if (lastParsed) {
-      const filename = `${lastParsed.key}__${Date.now()}.json`;
-      const url = await submitProposal({
-        token,
-        login,
-        filename,
-        submission: {
-          text: lastParsed.text,
-          semantic: lastParsed.semantic,
-          canonical_key: lastParsed.key,
-          submitted_at: new Date().toISOString(),
-          client_version: "1.0.0",
-        },
-      });
-      setStatus(`Proposition envoyée pour validation : ${url}`);
-    }
-  } catch (err) {
-    console.error(err);
-    setStatus(`Erreur d'authentification: ${err.message}`);
-  } finally {
-    authButton.disabled = false;
-  }
+// --- Navigation par niveaux : paysage (tout le graphe) <-> région (domaine) ---
+// Cliquer un nœud dans le canvas fait "zoomer" la vue sur son domaine
+// sémantique : les nœuds hors domaine sont estompés plutôt que retirés de
+// la simulation, pour éviter que le graphe ne saute visuellement.
+renderer.onNodeClick((node) => {
+  if (!node) return;
+  focusOnDomain(node.semantic.domain);
 });
+
+function focusOnDomain(domain) {
+  renderer.setFocusDomain(domain);
+  focusLabel.textContent = domain;
+  focusPill.classList.remove("hidden");
+}
+
+function clearFocus() {
+  renderer.setFocusDomain(null);
+  focusPill.classList.add("hidden");
+}
+
+focusClear.addEventListener("click", clearFocus);
 
 loadGraph();

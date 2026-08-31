@@ -1,0 +1,166 @@
+name: Process submission (Issue)
+
+# SECURITY MODEL — read this before touching triggers/permissions.
+#
+# Trigger is `issues: opened`, not `pull_request_target` and not any
+# trigger that checks out code from outside `main`. The issue body is
+# UNTRUSTED DATA, never executed: every step below either (a) uses
+# actions/github-script to read the payload via the GitHub API into a
+# JSON file — never interpolating it into a shell string, which is the
+# classic injection vector for `${{ github.event.issue.body }}` in a
+# `run:` block — or (b) hands that file to scripts/validate-submission.mjs,
+# which does nothing but JSON.parse it and check it against a fixed
+# schema. Nothing in this repo ever `eval`s, `exec`s, or otherwise runs
+# anything an issue author wrote.
+#
+# Because there is no fork/PR step anymore, there is no need for the old
+# two-workflow privilege split (unprivileged `pull_request` validator +
+# privileged `workflow_run` merger): the only untrusted input this single
+# workflow ever touches is issue text, which is why it's safe for it to
+# hold `contents: write` throughout.
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: graph-update
+  cancel-in-progress: false
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      # Writes issue number/author/body to a JSON file via the Node fs API
+      # inside actions/github-script — NOT via shell interpolation. This is
+      # the injection-safe way to get untrusted text out of the event
+      # payload; do not replace this with `echo "${{ github.event.issue.body }}" > file`.
+      - name: Dump issue payload (injection-safe)
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const issue = context.payload.issue;
+            fs.writeFileSync(
+              "issue-payload.json",
+              JSON.stringify({ number: issue.number, login: issue.user.login, body: issue.body || "" }, null, 2)
+            );
+            core.setOutput("has_marker", (issue.body || "").includes("<!-- sgd:submission:v1 -->"));
+
+      - name: Skip silently if this isn't an SGD submission
+        id: gate
+        run: |
+          if ! grep -q "sgd:submission:v1" issue-payload.json; then
+            echo "Pas une issue de soumission SGD — on ignore."
+            echo "is_submission=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_submission=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Label EVERY marked issue before validation, even ones that will
+      # turn out invalid — the rate-limit check in validate-submission.mjs
+      # searches by this label, so malformed-JSON spam still counts against
+      # the author's daily quota instead of being a free retry.
+      - name: Label as submission
+        if: steps.gate.outputs.is_submission == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              labels: ["sgd-submission"],
+            });
+
+      - uses: actions/setup-node@v4
+        if: steps.gate.outputs.is_submission == 'true'
+        with:
+          node-version: 20
+
+      - name: Validate (re-derives canonical_key from scratch, never trusts the issue's)
+        if: steps.gate.outputs.is_submission == 'true'
+        env:
+          ISSUE_PAYLOAD_PATH: issue-payload.json
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/validate-submission.mjs
+
+      - name: Read verdict
+        if: steps.gate.outputs.is_submission == 'true'
+        id: verdict
+        run: |
+          valid=$(node -pe "require('./validation-result.json').valid")
+          echo "valid=$valid" >> "$GITHUB_OUTPUT"
+
+      - name: Comment + close as invalid
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = require("./validation-result.json");
+            const reasons = result.reasons.map((r) => `- ${r}`).join("\n");
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: `Soumission invalide, aucune modification du graphe :\n\n${reasons}\n\nVous pouvez rouvrir une nouvelle soumission depuis le site.`,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              state: "closed",
+              state_reason: "not_planned",
+            });
+
+      - name: Install dependencies
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
+        run: npm ci --no-audit --no-fund
+
+      # The embedding model (~90MB) is downloaded once and cached; without
+      # this every submission would re-fetch it from huggingface.co.
+      - name: Cache embedding model
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .cache/transformers
+          key: transformers-all-MiniLM-L6-v2
+
+      - name: Process graph (canonicalization, novelty, bridge, stability)
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
+        run: node scripts/process-graph.mjs
+
+      - name: Commit updated graph
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
+        run: |
+          git config user.name "sgd-bot"
+          git config user.email "sgd-bot@users.noreply.github.com"
+          git add data/graph.json submissions/
+          git diff --cached --quiet && echo "Rien à committer" || git commit -m "chore: update graph from issue #${{ github.event.issue.number }}"
+          git push origin main
+
+      - name: Comment + close as processed
+        if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              body: "Proposition validée et intégrée au graphe. Le graphe publié sur GitHub Pages se met à jour dans les prochaines minutes.",
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.issue.number,
+              state: "closed",
+              state_reason: "completed",
+            });

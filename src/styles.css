@@ -127,21 +127,22 @@ html, body {
 
 .hidden { display: none !important; }
 
-.auth-panel {
+.publish-panel {
   pointer-events: auto;
   margin-top: 20px;
   width: min(480px, 90vw);
   text-align: center;
 }
 
-.auth-copy {
+.publish-copy {
   font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.5;
   margin-bottom: 14px;
 }
 
-.auth-button {
+.publish-button {
+  display: inline-block;
   background: var(--accent-agree);
   color: var(--bg);
   border: none;
@@ -151,13 +152,49 @@ html, body {
   font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
+  text-decoration: none;
 }
 
-.auth-device-code {
-  margin-top: 14px;
+.publish-button:hover {
+  filter: brightness(1.08);
+}
+
+.focus-pill {
+  position: fixed;
+  top: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(23, 29, 40, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.18);
+  border-radius: var(--r);
+  padding: 8px 14px;
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.focus-pill strong {
+  color: var(--accent-agree);
   font-family: var(--font-display);
-  font-size: 1.6rem;
-  letter-spacing: 0.08em;
+  font-weight: 400;
+}
+
+.focus-clear {
+  background: none;
+  border: 1px solid rgba(232, 227, 216, 0.25);
+  color: var(--text-muted);
+  border-radius: var(--r);
+  padding: 4px 10px;
+  font-family: var(--font-body);
+  font-size: 0.76rem;
+  cursor: pointer;
+}
+
+.focus-clear:hover {
+  border-color: var(--accent-agree);
   color: var(--accent-agree);
 }
 
