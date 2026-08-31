@@ -15,6 +15,11 @@
   <button id="focus-clear" class="focus-clear">Voir tout le graphe</button>
 </div>
 
+<div id="auth-pill" class="auth-pill hidden">
+  <span id="auth-status-text"></span>
+  <button id="auth-disconnect" class="auth-disconnect hidden">Se déconnecter</button>
+</div>
+
 <main class="stage">
   <div class="prompt-block">
     <h1 class="prompt-headline">Qu'ajoutez-vous à l'espace collectif&nbsp;?</h1>
@@ -49,16 +54,21 @@
   </div>
 
   <div id="publish-panel" class="publish-panel hidden">
-    <p class="publish-copy">
-      Aucun compte à créer ici. Vous allez ouvrir une Issue GitHub
-      pré-remplie sur votre propre compte : relisez-la, puis cliquez
-      « Submit new issue » <strong>sur GitHub</strong> pour publier
-      réellement votre proposition — ouvrir cette page ne suffit pas.
-      Revenez ensuite ici, cet onglet suit automatiquement le traitement.
-    </p>
-    <a id="publish-link" class="publish-button" href="#" target="_blank" rel="noopener">
+    <p id="publish-copy" class="publish-copy"></p>
+
+    <button id="publish-button" class="publish-button" type="button"></button>
+    <a id="publish-link" class="publish-button hidden" href="#" target="_blank" rel="noopener">
       Ouvrir l'Issue de soumission sur GitHub →
     </a>
+
+    <div id="device-flow-box" class="device-flow-box hidden">
+      <p>Entrez ce code sur GitHub, dans l'onglet qui vient de s'ouvrir :</p>
+      <div id="device-code" class="device-code"></div>
+      <a id="device-link" class="device-link" href="#" target="_blank" rel="noopener">
+        Rouvrir la page d'autorisation →
+      </a>
+    </div>
+
     <p id="publish-status" class="publish-status" aria-live="polite"></p>
   </div>
 </main>

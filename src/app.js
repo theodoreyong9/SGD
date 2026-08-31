@@ -4,6 +4,15 @@ import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
 import { recordSubmission, getTracked, refreshAllPending, dismissTracked } from "./tracker.js";
+import { isOAuthConfigured } from "./config.js";
+import {
+  getStoredToken,
+  isTokenValid,
+  clearStoredToken,
+  startDeviceFlow,
+  DeviceFlowError,
+} from "./oauth.js";
+import { createSubmissionIssue, GitHubApiError } from "./github-api.js";
 
 const canvas = document.getElementById("graph-canvas");
 const renderer = createGraphRenderer(canvas);
@@ -14,8 +23,13 @@ const submitButton = document.getElementById("submit-button");
 const searchButton = document.getElementById("search-button");
 const statusLine = document.getElementById("status-line");
 const publishPanel = document.getElementById("publish-panel");
+const publishCopy = document.getElementById("publish-copy");
+const publishButton = document.getElementById("publish-button");
 const publishLink = document.getElementById("publish-link");
 const publishStatus = document.getElementById("publish-status");
+const deviceFlowBox = document.getElementById("device-flow-box");
+const deviceCodeEl = document.getElementById("device-code");
+const deviceLink = document.getElementById("device-link");
 const resultPanel = document.getElementById("result-panel");
 const resultDomain = document.getElementById("result-domain");
 const resultConcepts = document.getElementById("result-concepts");
@@ -32,9 +46,46 @@ const trackerRefresh = document.getElementById("tracker-refresh");
 const searchPanel = document.getElementById("search-panel");
 const searchList = document.getElementById("search-list");
 const searchClose = document.getElementById("search-close");
+const authPill = document.getElementById("auth-pill");
+const authStatusText = document.getElementById("auth-status-text");
+const authDisconnect = document.getElementById("auth-disconnect");
 
 let graph = { nodes: [], edges: [] };
 let lastParsed = null; // { text, semantic } — aperçu local uniquement, non-autoritaire
+let authToken = null; // token valide en mémoire, une fois vérifié
+
+// --- Authentification (voir src/oauth.js, src/github-api.js) ---
+// Trois états possibles, gérés ici :
+//   1. OAuth non configuré (placeholders dans src/config.js) -> flux de
+//      repli par lien uniquement (comportement historique).
+//   2. OAuth configuré, pas encore de token valide -> le premier clic sur
+//      "Publier" démarre le Device Flow.
+//   3. Token valide en mémoire -> publication directe, invisible.
+async function initAuth() {
+  if (!isOAuthConfigured()) {
+    authPill.classList.add("hidden");
+    return;
+  }
+  authPill.classList.remove("hidden");
+
+  const stored = getStoredToken();
+  if (stored && (await isTokenValid(stored))) {
+    authToken = stored;
+    authStatusText.textContent = "Connecté à GitHub — publication automatique";
+    authDisconnect.classList.remove("hidden");
+  } else {
+    authToken = null;
+    authStatusText.textContent = "Non connecté — la publication ouvrira une autorisation GitHub";
+    authDisconnect.classList.add("hidden");
+  }
+}
+
+authDisconnect.addEventListener("click", () => {
+  clearStoredToken();
+  authToken = null;
+  authStatusText.textContent = "Non connecté — la publication ouvrira une autorisation GitHub";
+  authDisconnect.classList.add("hidden");
+});
 
 async function loadGraph() {
   const res = await fetch("data/graph.json", { cache: "no-store" });
@@ -83,6 +134,10 @@ async function findClosestNode(semantic) {
     }
   }
   return { node: best, similarity: bestScore };
+}
+
+function truncate(str, n) {
+  return str.length > n ? str.slice(0, n - 1) + "…" : str;
 }
 
 // runSearch : consultation pure du graphe, sans passer par WebLLM ni
@@ -190,11 +245,9 @@ async function showResult({ semantic }) {
 
   // Il n'y a plus de "correspondance exacte" à afficher ici : l'extraction
   // qui fait autorité tourne côté serveur (scripts/semantic-extract.mjs),
-  // indépendamment de celle-ci. Comparer l'id que CET aperçu produirait à
-  // ceux du graphe n'aurait aucun sens — les deux extractions n'ont aucune
-  // raison de converger vers la même structure, même pour un texte
-  // identique. Seule la proximité par embedding reste un signal valide,
-  // puisqu'elle porte sur le contenu réel, pas sur une égalité structurelle.
+  // indépendamment de celle-ci. Seule la proximité par embedding reste un
+  // signal valide, puisqu'elle porte sur le contenu réel, pas sur une
+  // égalité structurelle entre deux extractions indépendantes.
   if (closest && similarity > 0.5) {
     lines.push(
       `Idée proche à ${Math.round(similarity * 100)}% (par similarité sémantique, pas par mots-clés) d'une proposition existante : « ${escapeHtml(
@@ -235,24 +288,99 @@ async function showResult({ semantic }) {
   }
 
   resultPanel.classList.remove("hidden");
+  setupPublishPanel();
+}
+
+// setupPublishPanel(): configure le panneau de publication selon l'état
+// d'authentification courant. Un seul bouton visible à la fois, jamais
+// les deux formes en même temps.
+function setupPublishPanel() {
+  deviceFlowBox.classList.add("hidden");
+  publishStatus.textContent = "";
+
+  if (!isOAuthConfigured()) {
+    // Repli historique : lien pré-rempli, ouvre GitHub. Voir README.
+    try {
+      const ref = crypto.randomUUID();
+      const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref });
+      publishCopy.textContent =
+        "Vous allez ouvrir une Issue GitHub pré-remplie sur votre propre compte : relisez-la, puis cliquez « Submit new issue » sur GitHub pour publier réellement — revenez ensuite ici, cet onglet suit automatiquement le traitement.";
+      publishLink.href = url;
+      publishLink.classList.remove("hidden");
+      publishButton.classList.add("hidden");
+      publishLink.onclick = () => {
+        recordSubmission({ number: null, html_url: null, text: lastParsed.text, domain: lastParsed.semantic.domain });
+        publishStatus.textContent = "Enregistrée dans « Vos soumissions » — cliquez « Submit new issue » sur GitHub pour la publier réellement.";
+        renderTracker();
+      };
+      publishPanel.classList.remove("hidden");
+    } catch (err) {
+      if (err instanceof SubmissionTooLargeError) {
+        setStatus(err.message);
+        publishPanel.classList.add("hidden");
+      } else {
+        throw err;
+      }
+    }
+    return;
+  }
+
+  // OAuth configuré : bouton unique, comportement adaptatif.
+  publishLink.classList.add("hidden");
+  publishButton.classList.remove("hidden");
+  publishButton.disabled = false;
+  publishCopy.textContent = authToken
+    ? "Publication directe et automatique — aucun onglet GitHub ne s'ouvrira."
+    : "Une autorisation GitHub unique est nécessaire avant la première publication (valable pour toutes les suivantes, dans ce navigateur).";
+  publishButton.textContent = authToken ? "Publier" : "Se connecter et publier";
+  publishButton.onclick = () => publishDirectly();
+  publishPanel.classList.remove("hidden");
+}
+
+// publishDirectly(): chemin principal quand OAuth est configuré. Démarre
+// le Device Flow si nécessaire (une fois), puis crée l'Issue via l'API —
+// aucune redirection vers github.com pour l'acte de soumission lui-même.
+async function publishDirectly() {
+  publishButton.disabled = true;
 
   try {
-    const ref = crypto.randomUUID();
-    const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref });
-    publishLink.href = url;
-    publishPanel.classList.remove("hidden");
-    publishLink.onclick = () => {
-      recordSubmission({ ref, text: lastParsed.text, domain: lastParsed.semantic.domain });
-      publishStatus.textContent = "Enregistrée dans « Vos soumissions » ci-dessous — cliquez « Submit new issue » sur GitHub pour la publier réellement.";
-      renderTracker();
-    };
-  } catch (err) {
-    if (err instanceof SubmissionTooLargeError) {
-      setStatus(err.message);
-      publishPanel.classList.add("hidden");
-    } else {
-      throw err;
+    if (!authToken) {
+      publishStatus.textContent = "Ouverture de l'autorisation GitHub…";
+      authToken = await startDeviceFlow(({ userCode, verificationUri }) => {
+        deviceFlowBox.classList.remove("hidden");
+        deviceCodeEl.textContent = userCode;
+        deviceLink.href = verificationUri;
+        window.open(verificationUri, "_blank", "noopener");
+        publishStatus.textContent = "En attente de votre autorisation sur GitHub…";
+      });
+      deviceFlowBox.classList.add("hidden");
+      authStatusText.textContent = "Connecté à GitHub — publication automatique";
+      authDisconnect.classList.remove("hidden");
+      publishButton.textContent = "Publier";
+      publishCopy.textContent = "Publication directe et automatique — aucun onglet GitHub ne s'ouvrira.";
     }
+
+    publishStatus.textContent = "Publication en cours…";
+    const ref = crypto.randomUUID();
+    const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref });
+
+    recordSubmission({
+      number: issue.number,
+      html_url: issue.html_url,
+      text: lastParsed.text,
+      domain: lastParsed.semantic.domain,
+    });
+    renderTracker();
+    publishStatus.textContent = `Publiée (Issue #${issue.number}) — suivez son traitement dans « Vos soumissions » ci-dessous.`;
+  } catch (err) {
+    console.error(err);
+    if (err instanceof DeviceFlowError || err instanceof GitHubApiError) {
+      publishStatus.textContent = `Erreur: ${err.message}`;
+    } else {
+      publishStatus.textContent = `Erreur inattendue: ${err.message}`;
+    }
+  } finally {
+    publishButton.disabled = false;
   }
 }
 
@@ -263,10 +391,6 @@ const STATUS_LABELS = {
   unknown: "Statut inconnu",
 };
 
-function truncate(str, n) {
-  return str.length > n ? str.slice(0, n - 1) + "…" : str;
-}
-
 function renderTracker() {
   const tracked = getTracked();
   if (tracked.length === 0) {
@@ -276,6 +400,7 @@ function renderTracker() {
   trackerPanel.classList.remove("hidden");
   trackerList.innerHTML = tracked
     .map((t) => {
+      const id = t.number ?? t.recorded_at;
       const reasonLine =
         t.status === "rejected" && t.reason
           ? `<div class="tracker-reason">${escapeHtml(t.reason)}</div>`
@@ -289,16 +414,16 @@ function renderTracker() {
           <div class="tracker-status">${STATUS_LABELS[t.status] || t.status}</div>
           ${reasonLine}
           ${link}
-          <button class="tracker-dismiss" data-ref="${t.ref}" aria-label="Retirer du suivi">✕</button>
+          <button class="tracker-dismiss" data-id="${id}" aria-label="Retirer du suivi">✕</button>
         </li>`;
     })
     .join("");
 }
 
 trackerList.addEventListener("click", (e) => {
-  const ref = e.target.closest(".tracker-dismiss")?.dataset.ref;
-  if (ref) {
-    dismissTracked(ref);
+  const id = e.target.closest(".tracker-dismiss")?.dataset.id;
+  if (id) {
+    dismissTracked(id);
     renderTracker();
   }
 });
@@ -340,7 +465,7 @@ form.addEventListener("submit", async (e) => {
     }
 
     setStatus("Chargement du modèle local (une seule fois)…");
-    const semantic = await parseWithAI(text, (report) => setStatus(report.text || "Chargement…"));
+    const semantic = await parseWithAI(text);
     lastParsed = { text, semantic };
 
     setStatus("");
@@ -382,6 +507,7 @@ function clearFocus() {
 focusClear.addEventListener("click", clearFocus);
 
 renderTracker();
+initAuth();
 loadGraph().then(() => {
   refreshAllPending().then(() => {
     reconcileTrackedWithGraph();

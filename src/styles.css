@@ -238,6 +238,67 @@ html, body {
   filter: brightness(1.08);
 }
 
+.publish-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+  filter: none;
+}
+
+.device-flow-box {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px dashed rgba(232, 227, 216, 0.25);
+  border-radius: var(--r);
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.device-code {
+  margin: 8px 0;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+  letter-spacing: 0.1em;
+  color: var(--accent-agree);
+}
+
+.device-link {
+  color: var(--accent-agree);
+  font-size: 0.78rem;
+  text-decoration: none;
+}
+
+.auth-pill {
+  position: fixed;
+  top: 18px;
+  right: 22px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(23, 29, 40, 0.9);
+  border: 1px solid rgba(232, 227, 216, 0.18);
+  border-radius: var(--r);
+  padding: 8px 14px;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.auth-disconnect {
+  background: none;
+  border: 1px solid rgba(232, 227, 216, 0.25);
+  color: var(--text-muted);
+  border-radius: var(--r);
+  padding: 3px 9px;
+  font-family: var(--font-body);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.auth-disconnect:hover {
+  border-color: var(--accent-oppose);
+  color: var(--accent-oppose);
+}
+
 .publish-status {
   margin-top: 12px;
   font-size: 0.8rem;

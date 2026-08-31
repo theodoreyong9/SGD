@@ -9,7 +9,11 @@ au graphe collectif, sans bouton pour/contre.
 ```
 Navigateur (GitHub Pages, statique)
   ├─ WebLLM (src/semantic.js)          — parsing sémantique local, APERÇU UNIQUEMENT
-  ├─ Lien de soumission (src/publish.js) — Issue GitHub pré-remplie, ne contient que `text`
+  ├─ Publication — DEUX chemins possibles, choisis automatiquement :
+  │    (a) OAuth configuré + connecté → src/github-api.js crée l'Issue en
+  │        DIRECT via l'API, aucune redirection vers github.com
+  │    (b) sinon → src/publish.js construit un lien d'Issue pré-remplie
+  │        (repli historique, fonctionne sans aucune configuration)
   └─ Recherche pure (bouton "Rechercher") — embedding direct du texte, sans WebLLM,
        consulte le graphe sans jamais préparer de soumission
 
@@ -70,37 +74,76 @@ site continue de servir une version périmée indéfiniment, jusqu'à ce que
 quelqu'un pousse manuellement autre chose sur `main`. C'est exactement le
 symptôme qui s'est produit avant l'ajout de ce trigger.
 
-## Pourquoi une Issue GitHub plutôt qu'un fork + PR authentifié
+## Publication : deux chemins, choisis automatiquement
 
-La version précédente utilisait le Device Flow OAuth de GitHub pour obtenir
-un token, forkait le dépôt, poussait un commit sur une branche, et ouvrait
-une PR par l'API — tout depuis le navigateur. Ça marchait, mais ça exigeait
-de créer une GitHub OAuth App et de déployer un relais CORS (les endpoints
-`github.com/login/device/code` et `github.com/login/oauth/access_token` ne
-renvoient pas d'en-têtes CORS), donc un composant serveur de plus à
-maintenir, même sans secret.
+La toute première version de ce projet utilisait un flux OAuth complet
+(Device Flow + relais + appels API) pour publier directement, sans jamais
+ouvrir GitHub. On l'a ensuite simplifié en un simple lien pré-rempli — plus
+robuste, zéro configuration, mais avec un vrai défaut : chaque soumission
+redirige vers `github.com` et exige un clic manuel sur "Submit new issue"
+là-bas. Cette version restaure la publication directe **en plus** du lien,
+sans sacrifier la robustesse : si l'OAuth n'est pas configuré, le site
+continue de fonctionner exactement comme avant.
 
-`github.com/OWNER/REPO/issues/new?title=...&body=...` est un **lien**, pas
-un appel `fetch()`. Une navigation classique n'est jamais soumise à CORS —
-CORS ne s'applique qu'aux requêtes JavaScript cross-origin. Le flux devient :
+### Ce qui a rendu ça possible
 
-1. L'utilisateur écrit sa proposition → WebLLM l'analyse localement, comme avant.
-2. Le site construit un lien vers une nouvelle Issue, avec le JSON structuré
-   déjà rempli dans le corps (`src/publish.js`).
-3. L'utilisateur clique → arrive sur `github.com`, déjà connecté à **son
-   propre compte**, jamais au nôtre → relit → clique "Submit new issue".
-4. `process-submission.yml`, déclenché par `issues: opened`, lit `text`
-   (seul champ retenu, tout le reste du bloc JSON est ignoré), en extrait
-   sa propre structure sémantique côté serveur, et met à jour le graphe.
+`api.github.com` supporte CORS nativement pour les requêtes authentifiées
+(`Access-Control-Allow-Origin: *`, vérifié directement) — un `fetch()`
+depuis le navigateur vers l'API GitHub fonctionne donc sans aucun relais,
+**une fois qu'on a un token**. Le seul obstacle restant : les deux
+endpoints d'échange OAuth Device Flow
+(`github.com/login/device/code`, `github.com/login/oauth/access_token`)
+n'ont pas de CORS (vérifié : ils répondent `404` à une requête `OPTIONS`,
+contrairement à `api.github.com` qui répond `204` avec les en-têtes CORS).
+Il faut donc un relais — mais seulement pour ces deux appels précis, et
+**sans aucun secret à protéger** : le Device Flow, contrairement au flow
+"Authorization Code" classique des boutons "Login with GitHub", ne
+nécessite pas de `client_secret`. `proxy/worker.js` ne fait donc que
+transmettre deux requêtes en ajoutant des en-têtes CORS — il ne détient
+rien de sensible.
 
-Zéro compte à créer côté app, zéro token dans le navigateur, zéro CORS, zéro
-composant serveur à déployer en dehors de GitHub lui-même. Le seul coût :
-un clic de confirmation supplémentaire sur `github.com` — ce qui est plutôt
-une bonne chose côté anti-spam (confirmation humaine native sur un domaine
-qu'aucune page tierce ne peut simuler par script), pas seulement une
-contrainte technique.
+### Le flux, en pratique
 
-## Mise en place
+1. **Sans configuration** (`src/config.js` avec les valeurs par défaut) :
+   comportement identique à avant — lien pré-rempli, redirection vers
+   GitHub, clic manuel sur "Submit new issue".
+2. **Avec OAuth configuré**, première publication : l'utilisateur clique
+   "Se connecter et publier" → une popup GitHub s'ouvre avec un code à 8
+   caractères pré-rempli → un clic sur "Authorize" là-bas suffit → le token
+   est stocké dans `localStorage` de ce navigateur.
+3. **Toute publication suivante**, dans ce même navigateur : `fetch()`
+   direct vers `api.github.com/repos/OWNER/REPO/issues`, invisible, sans
+   jamais ouvrir GitHub. Coût réel : le clic d'autorisation initial reste
+   nécessaire (impossible d'établir une confiance sans qu'un humain
+   confirme une fois sur `github.com`), mais il n'est plus jamais répété.
+
+### Mise en place du flux direct (optionnel)
+
+Le site fonctionne sans rien de ce qui suit — ces étapes ne sont
+nécessaires que si vous voulez la publication invisible plutôt que le lien.
+
+1. **Créer une OAuth App GitHub** : Settings → Developer settings → OAuth
+   Apps → New OAuth App. Homepage URL : l'URL de votre GitHub Pages
+   (`https://theodoreyong9.github.io/SGD`). Authorization callback URL :
+   requise par le formulaire mais non utilisée par le Device Flow — mettez
+   la même URL. Une fois créée, ouvrez les réglages de l'app et cochez
+   **"Enable Device Flow"**.
+2. **Récupérer le Client ID** (visible sur la page de l'app — c'est une
+   donnée publique, pas le secret) et le coller dans
+   `src/config.js` (`OAUTH_CLIENT_ID`). Ne jamais générer ni utiliser de
+   client secret : le Device Flow n'en a pas besoin.
+3. **Déployer `proxy/worker.js`** sur Cloudflare Workers (offre gratuite
+   suffisante) :
+   ```
+   cd proxy
+   npx wrangler deploy
+   ```
+   Copiez l'URL `*.workers.dev` obtenue dans `src/config.js` (`PROXY_URL`).
+4. Rechargez le site : dès que `OAUTH_CLIENT_ID` et `PROXY_URL` ne sont
+   plus les valeurs par défaut, la pastille de connexion apparaît et le
+   bouton "Publier" bascule automatiquement en mode direct.
+
+## Mise en place minimale (obligatoire, quel que soit le mode de publication)
 
 1. **Configurer le dépôt cible** dans `src/config.js` : `OWNER`, `REPO`
    (déjà réglé sur `theodoreyong9`/`SGD` dans cette livraison).
@@ -109,8 +152,9 @@ contrainte technique.
 3. **Permissions Actions** : Settings → Actions → General → Workflow
    permissions → "Read and write permissions", pour que
    `process-submission.yml` puisse committer et pousser sur `main`.
-4. Rien d'autre. Pas d'OAuth App, pas de relais à déployer, pas de secret à
-   configurer au-delà du `GITHUB_TOKEN` fourni automatiquement par Actions.
+4. Rien d'autre n'est requis pour que le site fonctionne — la publication
+   se fera via le lien pré-rempli (voir ci-dessus) tant que l'OAuth
+   optionnel n'est pas configuré.
 
 ## Modèle de sécurité — ce qui est garanti et ce qui ne l'est pas
 
@@ -134,6 +178,16 @@ contrainte technique.
   du tout dans ce flux).
 - La répétition d'une même proposition canonique a un rendement marginal
   décroissant (`1/n`), implémenté dans `scripts/process-graph.mjs`.
+- **Les deux chemins de publication produisent la même Issue, traitée
+  identiquement.** Que la soumission passe par le lien pré-rempli ou par
+  l'API directe, `process-submission.yml` voit exactement le même corps
+  d'Issue et applique exactement la même validation — le choix du chemin
+  ne change rien aux garanties décrites ici.
+- **Le token OAuth stocké côté client** (`localStorage`, jamais envoyé à
+  un serveur à nous) a un scope volontairement étroit (`public_repo`) —
+  il permet d'ouvrir des issues sur des dépôts publics, rien de plus. Le
+  relais (`proxy/worker.js`) ne le voit jamais : il n'intervient que dans
+  l'échange initial (device_code → token), jamais dans son usage.
 
 **Non garanti, par limite structurelle :**
 - **Origine de la requête.** Rien n'empêche quelqu'un de forger une Issue
@@ -171,6 +225,14 @@ contrainte technique.
 
 ## Fonctionnalités implémentées
 
+- **Publication directe et invisible (optionnelle)** (`src/oauth.js`,
+  `src/github-api.js`, `proxy/worker.js`) : Device Flow OAuth sans
+  client secret, autorisation unique par navigateur, puis appels API
+  directs (`fetch()` vers `api.github.com`, CORS natif) pour chaque
+  soumission suivante — plus aucune redirection vers GitHub après la
+  première connexion. Se replie automatiquement sur le lien pré-rempli si
+  `src/config.js` n'est pas configuré. Voir "Publication : deux chemins"
+  ci-dessus.
 - **Extraction sémantique côté serveur** (`scripts/semantic-extract.mjs`) :
   seule source de vérité pour la structure d'une proposition, calculée à
   partir du seul `text` soumis — jamais d'un bloc `semantic` client. Voir
@@ -269,6 +331,17 @@ contrainte technique.
   issues invalides pour éviter le spam gratuit par JSON malformé.
 
 ## Limites connues
+
+- **Flux OAuth direct non testé de bout en bout en conditions réelles.**
+  La logique de `src/oauth.js`/`src/github-api.js`/`proxy/worker.js` a été
+  vérifiée point par point (support CORS réel de `api.github.com` confirmé
+  par requête directe, absence de CORS sur les endpoints Device Flow
+  confirmée de la même façon, exigences du Device Flow vérifiées dans la
+  documentation GitHub), mais je n'ai pas pu réaliser une autorisation
+  Device Flow complète moi-même — ça suppose un compte GitHub humain
+  cliquant "Authorize", ce qu'un environnement automatisé ne peut pas
+  simuler. Testez ce chemin en premier après déploiement si quelque chose
+  ne fonctionne pas comme prévu.
 
 - **Modèle d'extraction serveur non vérifié en conditions réelles, et
   latence associée.** Voir "Modèle de sécurité" ci-dessus — le choix de
