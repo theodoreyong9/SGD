@@ -113,16 +113,35 @@ export async function extractSemantic(text) {
 
   let raw = "";
   try {
-    const output = await generator(messages, {
+    // IMPORTANT : avec @xenova/transformers (le paquet épinglé dans
+    // package.json, ^2.17.2 — distinct du plus récent @huggingface/transformers
+    // qui accepte un tableau de messages directement), le pipeline
+    // text-generation n'accepte PAS `messages` tel quel. Il faut
+    // construire le prompt en texte via le chat template du tokenizer
+    // d'abord, puis appeler le générateur sur cette CHAÎNE. Appeler
+    // `generator(messages, ...)` directement — ce que faisait la version
+    // précédente de ce fichier — produit une sortie inexploitable sans
+    // lever d'erreur, d'où un repli systématique sur l'extraction
+    // minimale à chaque soumission, jamais détecté avant un vrai test en
+    // conditions réelles (voir README, section "Limites connues").
+    const prompt = generator.tokenizer.apply_chat_template(messages, {
+      tokenize: false,
+      add_generation_prompt: true,
+    });
+
+    const output = await generator(prompt, {
       max_new_tokens: 300,
       do_sample: false,
       temperature: 0,
     });
-    raw = output?.[0]?.generated_text;
-    // Selon la version de transformers.js, generated_text peut être une
-    // simple chaîne ou le tableau complet des messages (système + user +
-    // assistant) — dans ce dernier cas, seul le dernier tour nous intéresse.
-    if (Array.isArray(raw)) raw = raw[raw.length - 1]?.content || "";
+    raw = output?.[0]?.generated_text ?? "";
+
+    // Selon le template de chat du modèle, generated_text peut inclure
+    // l'intégralité du prompt (système + utilisateur) suivi de la
+    // réponse — on ne garde que ce qui suit le prompt d'origine.
+    if (typeof raw === "string" && raw.startsWith(prompt)) {
+      raw = raw.slice(prompt.length);
+    }
   } catch (err) {
     console.warn("extractSemantic: échec de génération, repli minimal —", err.message);
     return minimalFallback(text);
@@ -130,7 +149,10 @@ export async function extractSemantic(text) {
 
   const jsonMatch = String(raw || "").match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    console.warn("extractSemantic: aucun JSON exploitable dans la sortie, repli minimal.");
+    console.warn(
+      "extractSemantic: aucun JSON exploitable dans la sortie, repli minimal. Sortie brute (200 premiers caractères):",
+      JSON.stringify(String(raw || "").slice(0, 200))
+    );
     return minimalFallback(text);
   }
 
@@ -138,7 +160,7 @@ export async function extractSemantic(text) {
   try {
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    console.warn("extractSemantic: JSON invalide, repli minimal.");
+    console.warn("extractSemantic: JSON invalide, repli minimal. Bloc extrait:", JSON.stringify(jsonMatch[0].slice(0, 200)));
     return minimalFallback(text);
   }
 

@@ -38,48 +38,63 @@ html, body {
   color: var(--text);
   font-family: var(--font-body);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* En-tête fixe : le champ de soumission n'est plus une invite centrée
+   flottant au-dessus du graphe, mais une barre persistante en haut de
+   page. Le graphe occupe tout le reste de la page en dessous. */
+.top-bar {
+  flex-shrink: 0;
+  padding: 14px 24px 10px;
+  background: var(--surface);
+  border-bottom: 1px solid rgba(232, 227, 216, 0.14);
+  z-index: 3;
+}
+
+.top-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  max-width: 980px;
+  margin: 0 auto;
+}
+
+.top-bar-headline {
+  font-family: var(--font-display);
+  font-weight: 400;
+  font-size: 1.05rem;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.graph-area {
+  position: relative;
+  flex: 1;
+  min-height: 0; /* indispensable pour qu'un enfant flex avec overflow se dimensionne correctement */
+  overflow: hidden;
 }
 
 #graph-canvas {
-  position: fixed;
+  position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  display: block;
   z-index: 0;
-}
-
-.stage {
-  position: relative;
-  z-index: 1;
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  pointer-events: none;
-}
-
-.prompt-block {
-  pointer-events: auto;
-  width: min(560px, 90vw);
-  text-align: center;
-}
-
-.prompt-headline {
-  font-family: var(--font-display);
-  font-weight: 400;
-  font-size: clamp(1.5rem, 4vw, 2.1rem);
-  line-height: 1.25;
-  margin: 0 0 28px;
-  color: var(--text);
+  cursor: default;
 }
 
 .submit-form {
+  flex: 1 1 260px;
   display: flex;
   gap: 10px;
+  max-width: 640px;
   border-bottom: 1px solid rgba(232, 227, 216, 0.18);
-  padding-bottom: 10px;
+  padding-bottom: 6px;
   transition: border-color 0.2s ease;
 }
 
@@ -137,16 +152,38 @@ html, body {
   cursor: default;
 }
 
+/* Les panneaux (recherche, résultat, publication) flottent désormais en
+   haut de la ZONE DE GRAPHE (position: absolute dans #graph-area, qui est
+   position: relative) plutôt que centrés sur toute la page — la barre du
+   haut appartient maintenant à un autre bloc, ils ne doivent plus se
+   positionner par rapport à elle. */
+/* Conteneur partagé : search-panel, result-panel et publish-panel peuvent
+   être visibles simultanément (résultat + publication après une
+   soumission) — les empiler ici en flux normal évite qu'ils se
+   chevauchent, plutôt que de leur donner à chacun un `position: absolute`
+   individuel avec le même décalage. */
+.panel-stack {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-height: calc(100% - 40px);
+  overflow-y: auto;
+  pointer-events: none; /* seuls les panneaux enfants (pointer-events: auto) sont cliquables */
+}
+
 .search-panel {
   pointer-events: auto;
-  margin-top: 20px;
   width: min(560px, 90vw);
-  background: rgba(23, 29, 40, 0.9);
+  background: rgba(23, 29, 40, 0.94);
   border-left: 2px solid var(--accent-neutral);
   padding: 14px 20px;
   text-align: left;
-  max-height: 40vh;
-  overflow-y: auto;
 }
 
 .search-header {
@@ -199,7 +236,8 @@ html, body {
 
 .status-line {
   min-height: 1.4em;
-  margin-top: 14px;
+  max-width: 980px;
+  margin: 6px auto 0;
   font-size: 0.85rem;
   color: var(--text-muted);
   display: flex;
@@ -238,8 +276,10 @@ html, body {
 
 .publish-panel {
   pointer-events: auto;
-  margin-top: 20px;
   width: min(480px, 90vw);
+  background: rgba(23, 29, 40, 0.94);
+  border-radius: var(--r);
+  padding: 18px 20px;
   text-align: center;
 }
 
@@ -324,17 +364,15 @@ html, body {
 }
 
 .auth-pill {
-  position: fixed;
-  top: 18px;
-  right: 22px;
-  z-index: 2;
+  margin-left: auto;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(23, 29, 40, 0.9);
+  background: rgba(16, 20, 28, 0.6);
   border: 1px solid rgba(232, 227, 216, 0.18);
   border-radius: var(--r);
-  padding: 8px 14px;
+  padding: 6px 12px;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -474,48 +512,8 @@ html, body {
   font-size: 0.75rem;
 }
 
-.focus-pill {
-  position: fixed;
-  top: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  background: rgba(23, 29, 40, 0.9);
-  border: 1px solid rgba(232, 227, 216, 0.18);
-  border-radius: var(--r);
-  padding: 8px 14px;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.focus-pill strong {
-  color: var(--accent-agree);
-  font-family: var(--font-display);
-  font-weight: 400;
-}
-
-.focus-clear {
-  background: none;
-  border: 1px solid rgba(232, 227, 216, 0.25);
-  color: var(--text-muted);
-  border-radius: var(--r);
-  padding: 4px 10px;
-  font-family: var(--font-body);
-  font-size: 0.76rem;
-  cursor: pointer;
-}
-
-.focus-clear:hover {
-  border-color: var(--accent-agree);
-  color: var(--accent-agree);
-}
-
 .result-panel {
   pointer-events: auto;
-  margin-top: 28px;
   width: min(560px, 90vw);
   background: rgba(23, 29, 40, 0.9);
   border-left: 2px solid var(--accent-agree);
@@ -535,6 +533,20 @@ html, body {
 .result-domain {
   font-family: var(--font-display);
   font-size: 1rem;
+  color: var(--accent-agree);
+}
+
+.result-back {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-family: var(--font-body);
+  padding: 0;
+}
+
+.result-back:hover {
   color: var(--accent-agree);
 }
 
@@ -606,23 +618,6 @@ html, body {
 
 .breakdown-val {
   text-align: right;
-}
-
-.synth-button {
-  margin-top: 14px;
-  background: none;
-  border: 1px solid rgba(232, 227, 216, 0.2);
-  color: var(--text-muted);
-  border-radius: var(--r);
-  padding: 7px 12px;
-  font-family: var(--font-body);
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-.synth-button:hover {
-  border-color: var(--accent-agree);
-  color: var(--accent-agree);
 }
 
 .synth-output {

@@ -8,23 +8,9 @@
 </head>
 <body>
 
-<canvas id="graph-canvas"></canvas>
-
-<div id="focus-pill" class="focus-pill hidden">
-  <span>Région : <strong id="focus-label"></strong></span>
-  <button id="focus-clear" class="focus-clear">Voir tout le graphe</button>
-</div>
-
-<div id="toast" class="toast"></div>
-
-<div id="auth-pill" class="auth-pill hidden">
-  <span id="auth-status-text"></span>
-  <button id="auth-disconnect" class="auth-disconnect hidden">Se déconnecter</button>
-</div>
-
-<main class="stage">
-  <div class="prompt-block">
-    <h1 class="prompt-headline">Qu'ajoutez-vous à l'espace collectif&nbsp;?</h1>
+<header id="top-bar" class="top-bar">
+  <div class="top-bar-row">
+    <span class="top-bar-headline">Qu'ajoutez-vous à l'espace collectif&nbsp;?</span>
     <form id="submit-form" class="submit-form" autocomplete="off">
       <input
         id="submit-input"
@@ -35,59 +21,72 @@
       <button type="submit" id="submit-button">Envoyer</button>
       <button type="button" id="search-button" class="search-button">Rechercher</button>
     </form>
-    <p id="status-line" class="status-line" aria-live="polite"></p>
-  </div>
-
-  <div id="search-panel" class="search-panel hidden">
-    <div class="search-header">
-      <span>Dans le graphe</span>
-      <button id="search-close" class="result-close" aria-label="Fermer">✕</button>
+    <div id="auth-pill" class="auth-pill hidden">
+      <span id="auth-status-text"></span>
+      <button id="auth-disconnect" class="auth-disconnect hidden">Se déconnecter</button>
     </div>
-    <ul id="search-list" class="search-list"></ul>
   </div>
+  <p id="status-line" class="status-line" aria-live="polite"></p>
+</header>
 
-  <div id="result-panel" class="result-panel hidden">
-    <div class="result-header">
-      <span id="result-domain" class="result-domain"></span>
-      <button id="result-close" class="result-close" aria-label="Fermer">✕</button>
+<div id="graph-area" class="graph-area">
+  <canvas id="graph-canvas"></canvas>
+
+  <div id="panel-stack" class="panel-stack">
+    <div id="search-panel" class="search-panel hidden">
+      <div class="search-header">
+        <span>Dans le graphe</span>
+        <button id="search-close" class="result-close" aria-label="Fermer">✕</button>
+      </div>
+      <ul id="search-list" class="search-list"></ul>
     </div>
-    <div id="result-concepts" class="result-concepts"></div>
-    <div id="result-relations" class="result-relations"></div>
-  </div>
 
-  <div id="publish-panel" class="publish-panel hidden">
-    <p id="publish-copy" class="publish-copy"></p>
+    <div id="result-panel" class="result-panel hidden">
+      <div class="result-header">
+        <button id="result-back" class="result-back hidden">← Retour aux résultats</button>
+        <span id="result-domain" class="result-domain"></span>
+        <button id="result-close" class="result-close" aria-label="Fermer">✕</button>
+      </div>
+      <div id="result-concepts" class="result-concepts"></div>
+      <div id="result-relations" class="result-relations"></div>
+    </div>
 
-    <button id="publish-button" class="publish-button" type="button"></button>
-    <a id="publish-link" class="publish-button hidden" href="#" target="_blank" rel="noopener">
-      Ouvrir l'Issue de soumission sur GitHub →
-    </a>
+    <div id="publish-panel" class="publish-panel hidden">
+      <p id="publish-copy" class="publish-copy"></p>
 
-    <div id="device-flow-box" class="device-flow-box hidden">
-      <p>Entrez ce code sur GitHub, dans l'onglet qui vient de s'ouvrir :</p>
-      <div id="device-code" class="device-code"></div>
-      <a id="device-link" class="device-link" href="#" target="_blank" rel="noopener">
-        Rouvrir la page d'autorisation →
+      <button id="publish-button" class="publish-button" type="button"></button>
+      <a id="publish-link" class="publish-button hidden" href="#" target="_blank" rel="noopener">
+        Ouvrir l'Issue de soumission sur GitHub →
       </a>
+
+      <div id="device-flow-box" class="device-flow-box hidden">
+        <p>Entrez ce code sur GitHub, dans l'onglet qui vient de s'ouvrir :</p>
+        <div id="device-code" class="device-code"></div>
+        <a id="device-link" class="device-link" href="#" target="_blank" rel="noopener">
+          Rouvrir la page d'autorisation →
+        </a>
+      </div>
+
+      <p id="publish-status" class="publish-status" aria-live="polite"></p>
     </div>
-
-    <p id="publish-status" class="publish-status" aria-live="polite"></p>
   </div>
-</main>
 
-<aside id="tracker-panel" class="tracker-panel hidden">
-  <div class="tracker-header">
-    <span>Vos soumissions</span>
-  </div>
-  <p class="tracker-note">
-    Suivi propre à ce navigateur — mise à jour automatique en arrière-plan.
-  </p>
-  <ul id="tracker-list" class="tracker-list"></ul>
-</aside>
+  <div id="toast" class="toast"></div>
 
-<footer class="corner-note">
-  <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations
-</footer>
+  <aside id="tracker-panel" class="tracker-panel hidden">
+    <div class="tracker-header">
+      <span>Vos soumissions</span>
+    </div>
+    <p class="tracker-note">
+      Suivi propre à ce navigateur — mise à jour automatique en arrière-plan.
+    </p>
+    <ul id="tracker-list" class="tracker-list"></ul>
+  </aside>
+
+  <footer class="corner-note">
+    <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations
+  </footer>
+</div>
 
 <script type="module" src="src/app.js"></script>
 </body>

@@ -1,5 +1,5 @@
 import { createGraphRenderer } from "./graph-render.js";
-import { parseWithAI, isWebGPUAvailable } from "./semantic.js";
+import { parseWithAI, isWebGPUAvailable, isModelLoaded } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
@@ -35,11 +35,9 @@ const resultDomain = document.getElementById("result-domain");
 const resultConcepts = document.getElementById("result-concepts");
 const resultRelations = document.getElementById("result-relations");
 const resultClose = document.getElementById("result-close");
+const resultBack = document.getElementById("result-back");
 const nodeCountEl = document.getElementById("node-count");
 const edgeCountEl = document.getElementById("edge-count");
-const focusPill = document.getElementById("focus-pill");
-const focusLabel = document.getElementById("focus-label");
-const focusClear = document.getElementById("focus-clear");
 const trackerPanel = document.getElementById("tracker-panel");
 const trackerList = document.getElementById("tracker-list");
 const searchPanel = document.getElementById("search-panel");
@@ -108,7 +106,6 @@ function reconcileTrackedWithGraph() {
     const node = graph.nodes.find((n) => n.id === t.node_id);
     if (node) {
       renderer.setHighlight(node.id);
-      focusOnDomain(node.semantic.domain);
       break; // on ne met en évidence que la plus récente trouvée
     }
   }
@@ -187,9 +184,81 @@ async function pollUntilResolved(entry) {
 // simple pourcentage de similarité sans le reste n'a pas de sens, ce
 // nœud existe déjà pleinement dans le graphe, ses vraies statistiques
 // aussi.
-function showNodeDetail(node) {
+// Cache de synthèse par domaine — voir renderSynthesisSection() ci-dessous
+// pour le raisonnement complet. Clé: domaine, valeur: { text, count }.
+// `count` (nombre de nœuds du domaine au moment du calcul) sert à savoir
+// si le cache est encore à jour ou s'il faut regénérer.
+const synthesisCache = new Map();
+
+// renderSynthesisSection(domain) -> HTML (placeholder ou texte en cache)
+//
+// CHANGEMENT IMPORTANT : la synthèse est maintenant automatique et
+// systématique (elle se déclenche toute seule dès qu'un domaine a 2+
+// propositions, plus besoin de cliquer un bouton) — mais elle reste
+// délibérément un TEXTE, jamais un NŒUD DU GRAPHE. Ce n'est pas un détail
+// technique : c'est le principe fondateur du projet ("l'IA ne devient
+// jamais une source de vérité, seulement un outil de lecture" — voir
+// README, doctrine "Séparation IA / protocole"). En faire un nœud
+// recherchable signifierait lui donner un canonical_key, une influence,
+// une place dans le graphe — comme si l'IA avait "participé" au même
+// titre qu'une vraie personne. C'est exactement ce que le projet a été
+// conçu pour éviter.
+//
+// Ce qui est fait à la place, pour répondre au vrai problème ("le texte
+// disparaît") sans franchir cette ligne : mise en cache PAR DOMAINE, en
+// mémoire, pour la durée de la session. Revisiter n'importe quel nœud
+// d'un même domaine (recherche, clic sur le graphe, ou après une
+// soumission acceptée) réaffiche la MÊME synthèse instantanément, sans
+// la recalculer — elle ne "disparaît" donc plus tant que la page reste
+// ouverte. Elle n'est simplement jamais écrite dans data/graph.json.
+function renderSynthesisSection(domain) {
+  const domainNodes = graph.nodes.filter((n) => n.semantic.domain === domain);
+  if (domainNodes.length < 2) return "";
+
+  const cached = synthesisCache.get(domain);
+  if (cached && cached.count === domainNodes.length) {
+    return `<div class="synth-output">${escapeHtml(cached.text)}</div>`;
+  }
+  return `<div id="synth-live" class="synth-output"><span class="spinner spinner-sm" aria-hidden="true"></span> Synthèse du domaine « ${escapeHtml(domain)} » en cours…</div>`;
+}
+
+// À appeler juste après avoir inséré renderSynthesisSection() dans le DOM
+// — calcule réellement la synthèse si elle n'était pas déjà en cache, et
+// met à jour l'élément en place une fois prête. Ne fait rien si un appel
+// concurrent a déjà rempli le cache entre-temps (ex: deux nœuds du même
+// domaine consultés coup sur coup).
+async function ensureDomainSynthesis(domain) {
+  const domainNodes = graph.nodes.filter((n) => n.semantic.domain === domain);
+  if (domainNodes.length < 2) return;
+
+  const cached = synthesisCache.get(domain);
+  if (cached && cached.count === domainNodes.length) return;
+
+  try {
+    const text = await synthesizeSubgraph(domainNodes);
+    synthesisCache.set(domain, { text, count: domainNodes.length });
+    const live = document.getElementById("synth-live");
+    if (live) live.textContent = text;
+  } catch (err) {
+    const live = document.getElementById("synth-live");
+    if (live) live.textContent = `Synthèse indisponible: ${err.message}`;
+  }
+}
+
+// showNodeDetail(node, opts): fiche complète d'un nœud EXISTANT du graphe
+// — domaine, concepts, relations, décomposition de l'influence, et
+// synthèse du domaine — exactement comme après "Envoyer". Utilisé à
+// trois endroits : automatiquement quand une
+// soumission suivie est acceptée (pollUntilResolved), quand on clique un
+// résultat du panneau "Rechercher" (fromSearch: true, affiche le bouton
+// retour), et quand on clique un point directement dans le graphe. Dans
+// tous les cas, voir un simple pourcentage de similarité sans le reste
+// n'a pas de sens : ce nœud existe déjà pleinement dans le graphe, ses
+// vraies statistiques aussi.
+function showNodeDetail(node, { fromSearch = false } = {}) {
   searchPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
+  resultBack.classList.toggle("hidden", !fromSearch);
 
   resultDomain.textContent = node.semantic.domain;
   resultConcepts.innerHTML = (node.semantic.concepts || [])
@@ -199,11 +268,14 @@ function showNodeDetail(node) {
   const lines = (node.semantic.relations || []).map(
     (rel) => `→ ${rel.type.replace(/_/g, " ")} : ${escapeHtml(rel.target_hint)}`
   );
-  resultRelations.innerHTML = lines.map((l) => `<div>${l}</div>`).join("") + renderBreakdown(node);
+  resultRelations.innerHTML =
+    lines.map((l) => `<div>${l}</div>`).join("") +
+    renderBreakdown(node) +
+    renderSynthesisSection(node.semantic.domain);
 
   resultPanel.classList.remove("hidden");
   renderer.setHighlight(node.id);
-  focusOnDomain(node.semantic.domain);
+  ensureDomainSynthesis(node.semantic.domain);
 }
 
 // Real embedding similarity for the live preview (mirrors scripts/embeddings.mjs
@@ -266,7 +338,12 @@ async function runSearch() {
   }
 }
 
+let lastSearchRanked = null;
+let lastSearchQuery = null;
+
 function renderSearchResults(ranked, query) {
+  lastSearchRanked = ranked;
+  lastSearchQuery = query;
   searchPanel.classList.remove("hidden");
   if (ranked.length === 0) {
     searchList.innerHTML = `<li class="search-empty">Rien dans le graphe pour « ${escapeHtml(query)} » pour l'instant.</li>`;
@@ -286,7 +363,12 @@ function renderSearchResults(ranked, query) {
 searchList.addEventListener("click", (e) => {
   const key = e.target.closest(".search-item")?.dataset.key;
   const node = graph.nodes.find((n) => n.id === key);
-  if (node) showNodeDetail(node);
+  if (node) showNodeDetail(node, { fromSearch: true });
+});
+
+resultBack.addEventListener("click", () => {
+  resultPanel.classList.add("hidden");
+  if (lastSearchRanked) renderSearchResults(lastSearchRanked, lastSearchQuery);
 });
 
 searchButton.addEventListener("click", runSearch);
@@ -318,6 +400,7 @@ function renderBreakdown(node) {
 }
 
 async function showResult({ semantic }) {
+  resultBack.classList.add("hidden"); // aperçu de soumission, jamais "depuis la recherche"
   const { node: closest, similarity } = await findClosestNode(semantic);
 
   resultDomain.textContent = semantic.domain;
@@ -351,29 +434,13 @@ async function showResult({ semantic }) {
   }
 
   resultRelations.innerHTML =
-    lines.map((l) => `<div>${l}</div>`).join("") + renderBreakdown(breakdownNode);
-
-  const domainNodes = graph.nodes.filter((n) => n.semantic.domain === semantic.domain);
-  if (domainNodes.length >= 2) {
-    resultRelations.innerHTML += `<button id="synth-btn" class="synth-button">Synthétiser les propositions du domaine « ${escapeHtml(
-      semantic.domain
-    )} » (${domainNodes.length})</button><div id="synth-output" class="synth-output"></div>`;
-    document.getElementById("synth-btn").addEventListener("click", async (e) => {
-      e.target.disabled = true;
-      e.target.textContent = "Synthèse en cours…";
-      const out = document.getElementById("synth-output");
-      try {
-        out.textContent = await synthesizeSubgraph(domainNodes);
-      } catch (err) {
-        out.textContent = `Erreur de synthèse: ${err.message}`;
-      } finally {
-        e.target.remove();
-      }
-    });
-  }
+    lines.map((l) => `<div>${l}</div>`).join("") +
+    renderBreakdown(breakdownNode) +
+    renderSynthesisSection(semantic.domain);
 
   resultPanel.classList.remove("hidden");
   setupPublishPanel();
+  ensureDomainSynthesis(semantic.domain);
 }
 
 // setupPublishPanel(): configure le panneau de publication selon l'état
@@ -545,7 +612,7 @@ form.addEventListener("submit", async (e) => {
       return;
     }
 
-    setStatus("Chargement du modèle local…");
+    setStatus(isModelLoaded() ? "Analyse de votre texte…" : "Chargement du modèle local…");
     const semantic = await parseWithAI(text, (report) => {
       const progress = typeof report?.progress === "number" ? report.progress : 0;
       if (progress < 1) {
@@ -585,27 +652,11 @@ resultClose.addEventListener("click", () => {
   renderer.setHighlight(null);
 });
 
-// --- Navigation par niveaux : paysage (tout le graphe) <-> région (domaine) ---
-// Cliquer un nœud dans le canvas fait "zoomer" la vue sur son domaine
-// sémantique : les nœuds hors domaine sont estompés plutôt que retirés de
-// la simulation, pour éviter que le graphe ne saute visuellement.
+// --- Cliquer un nœud dans le graphe ouvre sa fiche complète ---
 renderer.onNodeClick((node) => {
   if (!node) return;
-  focusOnDomain(node.semantic.domain);
+  showNodeDetail(node);
 });
-
-function focusOnDomain(domain) {
-  renderer.setFocusDomain(domain);
-  focusLabel.textContent = domain;
-  focusPill.classList.remove("hidden");
-}
-
-function clearFocus() {
-  renderer.setFocusDomain(null);
-  focusPill.classList.add("hidden");
-}
-
-focusClear.addEventListener("click", clearFocus);
 
 renderTracker();
 initAuth();

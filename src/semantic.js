@@ -33,6 +33,10 @@ export async function loadModel(onProgress) {
   return loadingPromise;
 }
 
+export function isModelLoaded() {
+  return engine !== null;
+}
+
 export function isWebGPUAvailable() {
   return typeof navigator !== "undefined" && !!navigator.gpu;
 }

@@ -1,12 +1,11 @@
 // Minimal force-directed layout, dependency-free (fine for hundreds of nodes;
 // swap for a proper spatial index if the graph grows past a few thousand).
 //
-// Navigation à deux niveaux : "paysage" (tout le graphe, par défaut) et
-// "région" (un domaine sémantique mis en avant, le reste estompé). Cliquer
-// un nœud entre dans sa région ; le bouton de retour dans l'UI en sort.
-// Volontairement PAS un vrai niveau "sujet" (sous-graphe recalculé) —
-// voir README, section "Limites connues" — ceci reste un filtre visuel
-// sur le graphe existant, pas une nouvelle structure de données.
+// CHANGEMENT DE MISE EN PAGE : le canvas ne couvre plus toute la fenêtre —
+// il vit désormais dans #graph-area, sous la barre de soumission en haut
+// de page. Toute la physique (centre d'attraction, bornes du dessin) se
+// base donc sur la taille RÉELLE du canvas (`width`/`height` ci-dessous,
+// mesurés via getBoundingClientRect), plus sur window.innerWidth/innerHeight.
 
 const COLORS = {
   edge: {
@@ -34,7 +33,11 @@ const DIMMED_ALPHA = 0.12;
 
 export function createGraphRenderer(canvas) {
   const ctx = canvas.getContext("2d");
-  let width, height;
+  // Dimensions LOGIQUES (CSS) du canvas — pas celles de la fenêtre. Mesurées
+  // via getBoundingClientRect(), qui reflète la taille réelle une fois le
+  // layout (en-tête + zone de graphe) posé par le CSS.
+  let width = 0;
+  let height = 0;
   let nodes = [];
   let edges = [];
   let highlightedId = null;
@@ -43,10 +46,11 @@ export function createGraphRenderer(canvas) {
   let nodeClickHandler = null;
 
   function resize() {
-    width = canvas.width = window.innerWidth * devicePixelRatio;
-    height = canvas.height = window.innerHeight * devicePixelRatio;
-    canvas.style.width = window.innerWidth + "px";
-    canvas.style.height = window.innerHeight + "px";
+    const rect = canvas.getBoundingClientRect();
+    width = rect.width;
+    height = rect.height;
+    canvas.width = width * devicePixelRatio;
+    canvas.height = height * devicePixelRatio;
     ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   }
   window.addEventListener("resize", resize);
@@ -58,8 +62,8 @@ export function createGraphRenderer(canvas) {
       const prev = existingPositions.get(n.id);
       return {
         ...n,
-        x: prev?.x ?? window.innerWidth / 2 + (Math.random() - 0.5) * 200,
-        y: prev?.y ?? window.innerHeight / 2 + (Math.random() - 0.5) * 200,
+        x: prev?.x ?? width / 2 + (Math.random() - 0.5) * 200,
+        y: prev?.y ?? height / 2 + (Math.random() - 0.5) * 200,
         vx: 0,
         vy: 0,
         radius: 4 + Math.sqrt(n.stats.contribution) * 6 + n.stats.novelty * 6,
@@ -78,9 +82,10 @@ export function createGraphRenderer(canvas) {
     highlightedId = id;
   }
 
-  // setFocusDomain(domain | null): "région" view. Nodes outside `domain`
-  // are dimmed rather than removed, so the force simulation keeps running
-  // on the whole graph and nothing jumps when entering/leaving a region.
+  // setFocusDomain(domain | null): capacité conservée dans le moteur de
+  // rendu (estompage des nœuds hors domaine) même si plus aucun élément
+  // d'UI ne la déclenche pour l'instant depuis le retrait du pill "Région"
+  // — voir src/app.js. Utilisable si un futur filtre par domaine est ajouté.
   function setFocusDomain(domain) {
     focusDomain = domain || null;
   }
@@ -119,8 +124,8 @@ export function createGraphRenderer(canvas) {
   );
 
   function tick() {
-    const cx = window.innerWidth / 2;
-    const cy = window.innerHeight / 2;
+    const cx = width / 2;
+    const cy = height / 2;
 
     for (const n of nodes) {
       // gentle pull to center so the graph doesn't drift off-screen
@@ -167,7 +172,7 @@ export function createGraphRenderer(canvas) {
   }
 
   function draw() {
-    ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
+    ctx.clearRect(0, 0, width, height);
 
     for (const e of edges) {
       const dimmed = focusDomain && !(inFocus(e.sourceNode) && inFocus(e.targetNode));
