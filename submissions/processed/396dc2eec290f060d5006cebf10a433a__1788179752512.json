@@ -1,0 +1,21 @@
+{
+  "text": "bonbons pour tous",
+  "semantic": {
+    "concepts": [
+      "bonbons pour tous"
+    ],
+    "relations": [
+      {
+        "type": "generalise",
+        "target_hint": "bonbons pour tous"
+      }
+    ],
+    "objective": "obtenir des bonbons pour tous",
+    "means": "obtenir des bonbons pour tous de manière efficace",
+    "domain": "autre"
+  },
+  "canonical_key": "396dc2eec290f060d5006cebf10a433a",
+  "submitted_at": "2026-08-31T12:35:52.512Z",
+  "source_issue": 3,
+  "client_version": "2.0.0"
+}
