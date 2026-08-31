@@ -3,7 +3,7 @@ import { parseWithAI, isWebGPUAvailable } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
-import { recordSubmission, getTracked, refreshAllPending, refreshStatus, dismissTracked } from "./tracker.js";
+import { recordSubmission, getTracked, refreshStatus, dismissTracked } from "./tracker.js";
 import { isOAuthConfigured } from "./config.js";
 import {
   getStoredToken,
@@ -42,7 +42,6 @@ const focusLabel = document.getElementById("focus-label");
 const focusClear = document.getElementById("focus-clear");
 const trackerPanel = document.getElementById("tracker-panel");
 const trackerList = document.getElementById("tracker-list");
-const trackerRefresh = document.getElementById("tracker-refresh");
 const searchPanel = document.getElementById("search-panel");
 const searchList = document.getElementById("search-list");
 const searchClose = document.getElementById("search-close");
@@ -115,8 +114,22 @@ function reconcileTrackedWithGraph() {
   }
 }
 
-function setStatus(msg) {
-  statusLine.textContent = msg;
+// setStatus/setPublishStatus : affichent toujours un petit spinner animé
+// tant qu'un message est présent — plus jamais de texte figé qui donne
+// l'impression que l'interface est bloquée pendant un traitement en
+// cours (chargement de modèle, génération, attente du bot GitHub).
+// spinning=false permet d'afficher un message final sans spinner (ex:
+// une erreur, qui n'est plus "en cours").
+function setStatus(msg, spinning = Boolean(msg)) {
+  statusLine.innerHTML = msg
+    ? `${spinning ? '<span class="spinner" aria-hidden="true"></span>' : ""}<span>${escapeHtml(msg)}</span>`
+    : "";
+}
+
+function setPublishStatus(msg, spinning = Boolean(msg)) {
+  publishStatus.innerHTML = msg
+    ? `${spinning ? '<span class="spinner" aria-hidden="true"></span>' : ""}<span>${escapeHtml(msg)}</span>`
+    : "";
 }
 
 let toastTimer = null;
@@ -150,7 +163,7 @@ async function pollUntilResolved(entry) {
       renderTracker();
       showToast("Mise à jour effectuée ✓");
       const node = graph.nodes.find((n) => n.id === updated.node_id);
-      if (node) openSearchForNode(node);
+      if (node) showNodeDetail(node);
       return;
     }
     if (updated.status === "rejected") {
@@ -165,14 +178,30 @@ async function pollUntilResolved(entry) {
   }
 }
 
-// openSearchForNode(node): affiche directement le résultat de recherche
-// pour un nœud donné, comme si l'utilisateur venait de le chercher
-// lui-même — utilisé après qu'une soumission suivie soit intégrée au
-// graphe, pour montrer immédiatement le résultat sans action manuelle.
-function openSearchForNode(node) {
-  resultPanel.classList.add("hidden");
+// showNodeDetail(node): fiche complète d'un nœud EXISTANT du graphe —
+// domaine, concepts, relations, et décomposition de l'influence
+// (novelty/contribution/bridge/stability), exactement comme après
+// "Envoyer". Utilisé à deux endroits : automatiquement quand une
+// soumission suivie est acceptée (voir pollUntilResolved), et quand on
+// clique un résultat du panneau "Rechercher" — dans les deux cas, voir un
+// simple pourcentage de similarité sans le reste n'a pas de sens, ce
+// nœud existe déjà pleinement dans le graphe, ses vraies statistiques
+// aussi.
+function showNodeDetail(node) {
+  searchPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
-  renderSearchResults([{ node, similarity: 1 }], node.text);
+
+  resultDomain.textContent = node.semantic.domain;
+  resultConcepts.innerHTML = (node.semantic.concepts || [])
+    .map((c) => `<span>${escapeHtml(c)}</span>`)
+    .join("");
+
+  const lines = (node.semantic.relations || []).map(
+    (rel) => `→ ${rel.type.replace(/_/g, " ")} : ${escapeHtml(rel.target_hint)}`
+  );
+  resultRelations.innerHTML = lines.map((l) => `<div>${l}</div>`).join("") + renderBreakdown(node);
+
+  resultPanel.classList.remove("hidden");
   renderer.setHighlight(node.id);
   focusOnDomain(node.semantic.domain);
 }
@@ -257,10 +286,7 @@ function renderSearchResults(ranked, query) {
 searchList.addEventListener("click", (e) => {
   const key = e.target.closest(".search-item")?.dataset.key;
   const node = graph.nodes.find((n) => n.id === key);
-  if (node) {
-    renderer.setHighlight(node.id);
-    focusOnDomain(node.semantic.domain);
-  }
+  if (node) showNodeDetail(node);
 });
 
 searchButton.addEventListener("click", runSearch);
@@ -355,7 +381,7 @@ async function showResult({ semantic }) {
 // les deux formes en même temps.
 function setupPublishPanel() {
   deviceFlowBox.classList.add("hidden");
-  publishStatus.textContent = "";
+  setPublishStatus("");
 
   if (!isOAuthConfigured()) {
     // Repli historique : lien pré-rempli, ouvre GitHub. Voir README.
@@ -369,13 +395,13 @@ function setupPublishPanel() {
       publishButton.classList.add("hidden");
       publishLink.onclick = () => {
         recordSubmission({ number: null, html_url: null, text: lastParsed.text, domain: lastParsed.semantic.domain });
-        publishStatus.textContent = "Enregistrée dans « Vos soumissions » — cliquez « Submit new issue » sur GitHub pour la publier réellement.";
+        setPublishStatus("Enregistrée dans « Vos soumissions » — cliquez « Submit new issue » sur GitHub pour la publier réellement.", false);
         renderTracker();
       };
       publishPanel.classList.remove("hidden");
     } catch (err) {
       if (err instanceof SubmissionTooLargeError) {
-        setStatus(err.message);
+        setStatus(err.message, false);
         publishPanel.classList.add("hidden");
       } else {
         throw err;
@@ -404,13 +430,13 @@ async function publishDirectly() {
 
   try {
     if (!authToken) {
-      publishStatus.textContent = "Ouverture de l'autorisation GitHub…";
+      setPublishStatus("Ouverture de l'autorisation GitHub…");
       authToken = await startDeviceFlow(({ userCode, verificationUri }) => {
         deviceFlowBox.classList.remove("hidden");
         deviceCodeEl.textContent = userCode;
         deviceLink.href = verificationUri;
         window.open(verificationUri, "_blank", "noopener");
-        publishStatus.textContent = "En attente de votre autorisation sur GitHub…";
+        setPublishStatus("En attente de votre autorisation sur GitHub…");
       });
       deviceFlowBox.classList.add("hidden");
       authStatusText.textContent = "Connecté à GitHub — publication automatique";
@@ -419,7 +445,7 @@ async function publishDirectly() {
       publishCopy.textContent = "Publication directe et automatique — aucun onglet GitHub ne s'ouvrira.";
     }
 
-    publishStatus.textContent = "Publication en cours…";
+    setPublishStatus("Publication en cours…");
     const ref = crypto.randomUUID();
     const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref });
 
@@ -430,14 +456,18 @@ async function publishDirectly() {
       domain: lastParsed.semantic.domain,
     });
     renderTracker();
-    publishStatus.textContent = "Envoyée — mise à jour automatique du site à la fin du traitement.";
+    // Le spinner continue de tourner ici : le traitement GitHub n'est pas
+    // fini, seul l'envoi l'est. pollUntilResolved efface ce message (et
+    // affiche le toast) une fois la vraie résolution connue — jamais de
+    // texte figé pendant que ça travaille encore en arrière-plan.
+    setPublishStatus("En cours de traitement par GitHub…");
     pollUntilResolved(list[0]);
   } catch (err) {
     console.error(err);
     if (err instanceof DeviceFlowError || err instanceof GitHubApiError) {
-      publishStatus.textContent = `Erreur: ${err.message}`;
+      setPublishStatus(`Erreur: ${err.message}`, false);
     } else {
-      publishStatus.textContent = `Erreur inattendue: ${err.message}`;
+      setPublishStatus(`Erreur inattendue: ${err.message}`, false);
     }
   } finally {
     publishButton.disabled = false;
@@ -468,10 +498,14 @@ function renderTracker() {
       const link = t.issue_url
         ? `<a href="${t.issue_url}" target="_blank" rel="noopener" class="tracker-link">Voir l'issue →</a>`
         : "";
+      // Spinner uniquement pour les états encore ouverts — une fois
+      // accepté ou rejeté, il n'y a plus rien "en cours" à signaler ici.
+      const isActive = t.status === "pending" || t.status === "unknown";
+      const spinner = isActive ? '<span class="spinner spinner-sm" aria-hidden="true"></span>' : "";
       return `
         <li class="tracker-item tracker-${t.status}">
           <div class="tracker-text">${escapeHtml(truncate(t.text, 60))}</div>
-          <div class="tracker-status">${STATUS_LABELS[t.status] || t.status}</div>
+          <div class="tracker-status">${spinner}${STATUS_LABELS[t.status] || t.status}</div>
           ${reasonLine}
           ${link}
           <button class="tracker-dismiss" data-id="${id}" aria-label="Retirer du suivi">✕</button>
@@ -485,19 +519,6 @@ trackerList.addEventListener("click", (e) => {
   if (id) {
     dismissTracked(id);
     renderTracker();
-  }
-});
-
-trackerRefresh.addEventListener("click", async () => {
-  trackerRefresh.disabled = true;
-  trackerRefresh.textContent = "Actualisation…";
-  try {
-    await refreshAllPending();
-    reconcileTrackedWithGraph();
-    renderTracker();
-  } finally {
-    trackerRefresh.disabled = false;
-    trackerRefresh.textContent = "Actualiser";
   }
 });
 
@@ -520,22 +541,39 @@ form.addEventListener("submit", async (e) => {
 
   try {
     if (!isWebGPUAvailable()) {
-      setStatus("WebGPU indisponible sur ce navigateur — l'analyse sémantique locale ne peut pas tourner ici.");
+      setStatus("WebGPU indisponible sur ce navigateur — l'analyse sémantique locale ne peut pas tourner ici.", false);
       return;
     }
 
     setStatus("Chargement du modèle local…");
     const semantic = await parseWithAI(text, (report) => {
-      const pct = typeof report?.progress === "number" ? ` ${Math.round(report.progress * 100)}%` : "";
-      setStatus(`${report?.text || "Chargement du modèle local…"}${pct}`);
+      const progress = typeof report?.progress === "number" ? report.progress : 0;
+      if (progress < 1) {
+        setStatus(`Chargement du modèle local… ${Math.round(progress * 100)}%`);
+      } else {
+        // Le callback de progression de WebLLM ne couvre que le
+        // CHARGEMENT du modèle — une fois à 100%, plus aucun événement ne
+        // survient pendant la génération elle-même. Sans ce changement de
+        // texte, le dernier message de chargement (souvent illisible,
+        // type "Finish loading on WebGPU - amd") resterait figé à
+        // l'écran pendant toute la génération, comme si l'app était
+        // bloquée — le spinner continue de tourner, mais le texte doit
+        // changer de phase pour rester honnête sur ce qui se passe.
+        setStatus("Analyse de votre texte…");
+      }
     });
     lastParsed = { text, semantic };
 
-    setStatus("");
+    // Le spinner continue de tourner : showResult() fait encore une
+    // recherche par embedding avant d'afficher le résultat et le bouton
+    // "Publier" — pas d'interruption visuelle entre la génération et
+    // l'apparition du résultat.
+    setStatus("Recherche dans le graphe…");
     await showResult(lastParsed);
+    setStatus("");
   } catch (err) {
     console.error(err);
-    setStatus(`Erreur: ${err.message}`);
+    setStatus(`Erreur: ${err.message}`, false);
   } finally {
     submitButton.disabled = false;
   }

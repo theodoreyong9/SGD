@@ -202,6 +202,36 @@ html, body {
   margin-top: 14px;
   font-size: 0.85rem;
   color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* Spinner réutilisable — indique un traitement en cours (chargement de
+   modèle, génération, attente du traitement GitHub) plutôt que de laisser
+   un texte statique donner l'impression que l'interface est figée. */
+.spinner {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(232, 227, 216, 0.25);
+  border-top-color: var(--accent-agree);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.spinner-sm {
+  width: 10px;
+  height: 10px;
+  border-width: 1.5px;
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .hidden { display: none !important; }
@@ -330,6 +360,10 @@ html, body {
   font-size: 0.8rem;
   color: var(--text-muted);
   min-height: 1.2em;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
 }
 
 .tracker-panel {
