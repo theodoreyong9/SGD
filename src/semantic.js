@@ -80,7 +80,44 @@ function normalizeEnum(value) {
     .replace(/\s+/g, "_");
 }
 
+// Répare les erreurs de JSON les plus fréquentes chez un petit modèle
+// local (virgule finale avant `]` ou `}`) — bien plus fréquent que du JSON
+// franchement aléatoire. Ne corrige pas tout, juste ce cas précis, qui
+// suffit à éviter la majorité des plantages observés en pratique.
+function repairTrailingCommas(jsonText) {
+  return jsonText.replace(/,\s*([\]}])/g, "$1");
+}
+
+// Repli minimal si le modèle local ne produit vraiment rien d'exploitable
+// — mirroir volontaire de minimalFallback() dans
+// scripts/semantic-extract.mjs, pour la même raison : ceci n'est qu'un
+// APERÇU (voir en-tête de fichier), donc un échec de génération ne doit
+// jamais bloquer l'utilisateur, juste dégrader l'aperçu affiché.
+function minimalFallback(text) {
+  const words = String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}\s]/gu, "")
+    .split(/\s+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 3);
+  return {
+    concepts: words.length > 0 ? words : ["proposition"],
+    relations: [],
+    objective: "",
+    means: "",
+    domain: "autre",
+  };
+}
+
 // parseWithAI(text) -> { concepts, relations, objective, means, domain }
+//
+// Ne lève jamais pour un JSON malformé ou absent : retombe sur un aperçu
+// minimal plutôt que de casser tout le flux de soumission. C'est un
+// aperçu (voir en-tête de fichier) — un aléa de génération locale ne doit
+// jamais empêcher l'utilisateur d'aller jusqu'à la publication, où seule
+// l'extraction serveur compte réellement.
 export async function parseWithAI(text) {
   const e = await loadModel();
   const reply = await e.chat.completions.create({
@@ -94,24 +131,41 @@ export async function parseWithAI(text) {
 
   const raw = reply.choices[0].message.content.trim();
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Le modèle n'a pas produit de JSON exploitable.");
-  const parsed = JSON.parse(jsonMatch[0]);
+  if (!jsonMatch) {
+    console.warn("parseWithAI: aucun JSON exploitable dans la sortie du modèle, repli minimal.");
+    return minimalFallback(text);
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    try {
+      parsed = JSON.parse(repairTrailingCommas(jsonMatch[0]));
+    } catch (e2) {
+      console.warn("parseWithAI: JSON invalide même après réparation, repli minimal —", e2.message);
+      return minimalFallback(text);
+    }
+  }
 
   const domainCandidate = normalizeEnum(parsed.domaine);
   const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "autre";
 
-  const relations = (parsed.relations || [])
+  const relations = (Array.isArray(parsed.relations) ? parsed.relations : [])
     .map((r) => ({
       type: normalizeEnum(r?.type),
       target_hint: r?.target_hint || "",
     }))
     // Une relation dont le type est hors-liste est abandonnée plutôt que
-    // requalifiée au hasard : le modèle n'a produit qu'un type sur les 7
+    // requalifiée au hasard : le modèle n'a produit qu'un type sur les 8
     // permis, on ne peut pas deviner lequel il voulait dire.
     .filter((r) => ALLOWED_RELATION_TYPES.has(r.type) && r.target_hint);
 
+  const concepts = Array.isArray(parsed.concepts) ? parsed.concepts : [];
+  if (concepts.length === 0) return minimalFallback(text);
+
   return {
-    concepts: parsed.concepts || [],
+    concepts,
     relations,
     objective: parsed.objectif || "",
     means: parsed.moyen || "",
@@ -119,9 +173,15 @@ export async function parseWithAI(text) {
   };
 }
 
-// ---- Deterministic canonicalization (mirrors scripts/canonical.mjs) ----
-// Kept in sync manually. If you change one, change the other, or the CI's
-// re-verification of canonical_key will reject every legitimate submission.
+// ---- Canonicalisation locale (miroir de scripts/canonical.mjs) ----
+// AVERTISSEMENT : contrairement à ce que ce commentaire disait avant le
+// passage à l'extraction serveur, la CI ne recalcule PLUS et ne compare
+// PLUS jamais ce que cette fonction produit — voir l'en-tête de fichier.
+// `canonicalKey` reste ici uniquement comme utilitaire potentiellement
+// utile (ex: dédupliquer localement plusieurs aperçus dans une session),
+// mais rien dans l'app ne l'utilise plus pour décider quoi que ce soit
+// côté identité. Gardée synchronisée avec scripts/canonical.mjs par
+// habitude, pas par nécessité protocolaire.
 
 function stripDiacritics(str) {
   return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
