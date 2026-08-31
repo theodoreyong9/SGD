@@ -1,8 +1,26 @@
 name: Deploy to Pages
 
+# DEUX déclencheurs, pour une raison précise :
+#
+#   - `push: branches: [main]` couvre un push MANUEL (édition directe du
+#     repo, premier déploiement, etc.).
+#
+#   - `workflow_run` couvre le cas réel de ce projet : quand
+#     process-submission.yml pousse un commit avec le GITHUB_TOKEN
+#     automatique, GitHub bloque VOLONTAIREMENT le déclenchement en chaîne
+#     d'un autre workflow sur cet événement push — protection anti-boucle
+#     infinie intégrée à Actions, documentée mais facile à oublier. Sans ce
+#     second déclencheur, chaque graphe mis à jour par une Issue acceptée
+#     ne serait JAMAIS republié sur Pages tant que personne ne pousse
+#     manuellement autre chose sur `main`. C'est exactement ce qui s'est
+#     produit avant l'ajout de ce trigger : le graphe était à jour dans le
+#     dépôt, mais le site continuait à servir une version périmée.
 on:
   push:
     branches: [main]
+  workflow_run:
+    workflows: ["Process submission (Issue)"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
@@ -16,12 +34,19 @@ concurrency:
 
 jobs:
   deploy:
+    # Ne redéploie pas après une soumission rejetée (aucun changement au
+    # graphe) ni après un échec du workflow de traitement — seulement
+    # après un push manuel, un déclenchement explicite, ou un traitement
+    # d'Issue réussi.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

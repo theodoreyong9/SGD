@@ -118,6 +118,85 @@ html, body {
   cursor: default;
 }
 
+.search-button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  cursor: pointer;
+  padding: 8px 4px;
+}
+
+.search-button:hover {
+  color: var(--accent-neutral);
+}
+
+.search-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.search-panel {
+  pointer-events: auto;
+  margin-top: 20px;
+  width: min(560px, 90vw);
+  background: rgba(23, 29, 40, 0.9);
+  border-left: 2px solid var(--accent-neutral);
+  padding: 14px 20px;
+  text-align: left;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 10px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.search-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--r);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.search-item:hover {
+  background: rgba(92, 122, 153, 0.15);
+}
+
+.search-similarity {
+  color: var(--accent-neutral);
+  font-family: var(--font-display);
+  min-width: 3em;
+}
+
+.search-text {
+  color: var(--text);
+}
+
+.search-empty {
+  color: var(--text-faint);
+  font-size: 0.82rem;
+  list-style: none;
+}
+
 .status-line {
   min-height: 1.4em;
   margin-top: 14px;

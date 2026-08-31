@@ -11,6 +11,7 @@ const renderer = createGraphRenderer(canvas);
 const form = document.getElementById("submit-form");
 const input = document.getElementById("submit-input");
 const submitButton = document.getElementById("submit-button");
+const searchButton = document.getElementById("search-button");
 const statusLine = document.getElementById("status-line");
 const publishPanel = document.getElementById("publish-panel");
 const publishLink = document.getElementById("publish-link");
@@ -28,6 +29,9 @@ const focusClear = document.getElementById("focus-clear");
 const trackerPanel = document.getElementById("tracker-panel");
 const trackerList = document.getElementById("tracker-list");
 const trackerRefresh = document.getElementById("tracker-refresh");
+const searchPanel = document.getElementById("search-panel");
+const searchList = document.getElementById("search-list");
+const searchClose = document.getElementById("search-close");
 
 let graph = { nodes: [], edges: [] };
 let lastParsed = null; // { text, semantic, key }
@@ -44,16 +48,27 @@ async function loadGraph() {
 // Dès que le graphe rechargé contient déjà le canonical_key d'une
 // soumission suivie, on la marque "accepted" localement, sans attendre
 // l'API GitHub — le signal le plus rapide et le plus fiable qu'on ait,
-// puisqu'il vient directement du graphe publié.
+// puisqu'il vient directement du graphe publié. On met aussi en évidence
+// le nœud correspondant : pas besoin de relancer manuellement une
+// recherche pour voir sa propre contribution apparaître.
 function reconcileTrackedWithGraph() {
   let changed = false;
+  let newlyAccepted = null;
   for (const t of getTracked()) {
     if (t.status !== "accepted" && graph.nodes.some((n) => n.id === t.key)) {
       setTrackedStatus(t.key, { status: "accepted" });
       changed = true;
+      newlyAccepted = t.key;
     }
   }
   if (changed) renderTracker();
+  if (newlyAccepted) {
+    const node = graph.nodes.find((n) => n.id === newlyAccepted);
+    if (node) {
+      renderer.setHighlight(node.id);
+      focusOnDomain(node.semantic.domain);
+    }
+  }
 }
 
 function setStatus(msg) {
@@ -77,6 +92,76 @@ async function findClosestNode(semantic) {
   }
   return { node: best, similarity: bestScore };
 }
+
+// runSearch : consultation pure du graphe, sans passer par WebLLM ni
+// préparer une soumission. Recherche = navigation, distincte de proposer
+// — le bouton "Rechercher" utilise seulement le petit modèle d'embeddings
+// (src/embeddings.js, WASM), pas le modèle génératif plus lourd chargé
+// par "Envoyer" (src/semantic.js, WebGPU). On embed directement le texte
+// brut de la requête, sans extraction de concepts/objectif/moyen : pour
+// juste "aller voir ce qu'il y a", la structuration complète est un coût
+// inutile.
+async function runSearch() {
+  const text = input.value.trim();
+  if (!text) return;
+
+  resultPanel.classList.add("hidden");
+  publishPanel.classList.add("hidden");
+  searchButton.disabled = true;
+  setStatus("Recherche dans le graphe…");
+
+  try {
+    if (graph.nodes.length === 0) {
+      renderSearchResults([], text);
+      return;
+    }
+    const queryEmbedding = await embed(text);
+    const ranked = graph.nodes
+      .filter((n) => n.embedding)
+      .map((n) => ({ node: n, similarity: cosineSimilarity(queryEmbedding, n.embedding) }))
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 8);
+    renderSearchResults(ranked, text);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Erreur de recherche: ${err.message}`);
+  } finally {
+    searchButton.disabled = false;
+    setStatus("");
+  }
+}
+
+function renderSearchResults(ranked, query) {
+  searchPanel.classList.remove("hidden");
+  if (ranked.length === 0) {
+    searchList.innerHTML = `<li class="search-empty">Rien dans le graphe pour « ${escapeHtml(query)} » pour l'instant.</li>`;
+    return;
+  }
+  searchList.innerHTML = ranked
+    .map(
+      ({ node, similarity }) => `
+        <li class="search-item" data-key="${node.id}">
+          <span class="search-similarity">${Math.round(similarity * 100)}%</span>
+          <span class="search-text">${escapeHtml(truncate(node.text, 70))}</span>
+        </li>`
+    )
+    .join("");
+}
+
+searchList.addEventListener("click", (e) => {
+  const key = e.target.closest(".search-item")?.dataset.key;
+  const node = graph.nodes.find((n) => n.id === key);
+  if (node) {
+    renderer.setHighlight(node.id);
+    focusOnDomain(node.semantic.domain);
+  }
+});
+
+searchButton.addEventListener("click", runSearch);
+
+searchClose.addEventListener("click", () => {
+  searchPanel.classList.add("hidden");
+});
 
 function renderBreakdown(node) {
   if (!node?.stats?.breakdown) return "";
@@ -252,6 +337,7 @@ form.addEventListener("submit", async (e) => {
   submitButton.disabled = true;
   resultPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
+  searchPanel.classList.add("hidden");
   publishStatus.textContent = "";
 
   try {

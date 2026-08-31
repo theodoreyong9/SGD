@@ -26,8 +26,17 @@
         maxlength="2000"
       />
       <button type="submit" id="submit-button">Envoyer</button>
+      <button type="button" id="search-button" class="search-button">Rechercher</button>
     </form>
     <p id="status-line" class="status-line" aria-live="polite"></p>
+  </div>
+
+  <div id="search-panel" class="search-panel hidden">
+    <div class="search-header">
+      <span>Dans le graphe</span>
+      <button id="search-close" class="result-close" aria-label="Fermer">✕</button>
+    </div>
+    <ul id="search-list" class="search-list"></ul>
   </div>
 
   <div id="result-panel" class="result-panel hidden">

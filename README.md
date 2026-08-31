@@ -10,18 +10,35 @@ au graphe collectif, sans bouton pour/contre.
 Navigateur (GitHub Pages, statique)
   ├─ WebLLM (src/semantic.js)          — parsing sémantique local, dans le navigateur
   ├─ Canonicalisation (src/semantic.js) — déterministe, miroir de scripts/canonical.mjs
-  └─ Lien de soumission (src/publish.js) — Issue GitHub pré-remplie, aucun compte tiers
+  ├─ Lien de soumission (src/publish.js) — Issue GitHub pré-remplie, aucun compte tiers
+  └─ Recherche pure (bouton "Rechercher") — embedding direct du texte, sans WebLLM,
+       consulte le graphe sans jamais préparer de soumission
 
-GitHub Actions (un seul workflow, déclenché par les Issues)
-  └─ process-submission.yml (issues: opened)
-       → extrait le bloc JSON du corps de l'issue (donnée, jamais du code exécuté)
-       → RECALCULE canonical_key à partir de zéro, ne fait jamais confiance à l'issue
-       → si valide : met à jour data/graph.json, commit + push sur main, ferme l'issue
-       → si invalide : commente les raisons, ferme l'issue sans rien modifier
+GitHub Actions (deux workflows)
+  ├─ process-submission.yml (issues: opened)
+  │    → extrait le bloc JSON du corps de l'issue (donnée, jamais du code exécuté)
+  │    → RECALCULE canonical_key à partir de zéro, ne fait jamais confiance à l'issue
+  │    → si valide : met à jour data/graph.json, commit + push sur main, ferme l'issue
+  │    → si invalide : commente les raisons, ferme l'issue sans rien modifier
+  └─ deploy.yml (push sur main OU fin de process-submission.yml)
+       → republie le site sur GitHub Pages — voir "Pourquoi deux déclencheurs" ci-dessous
 ```
 
 Il n'y a plus ni relais CORS, ni OAuth App, ni fork/PR. Voir "Pourquoi ce
 choix" ci-dessous pour ce que ça change par rapport à la version précédente.
+
+## Pourquoi `deploy.yml` a deux déclencheurs
+
+`process-submission.yml` pousse son commit avec le `GITHUB_TOKEN`
+automatique de l'Actions runner. GitHub bloque **volontairement** le
+déclenchement en chaîne d'un autre workflow sur l'événement `push` que ce
+token produit — protection anti-boucle infinie intégrée à Actions,
+documentée mais facile à oublier. Sans le second déclencheur
+(`workflow_run`, qui écoute la fin de `process-submission.yml` plutôt que
+l'événement push lui-même), le graphe se met à jour dans le dépôt mais le
+site continue de servir une version périmée indéfiniment, jusqu'à ce que
+quelqu'un pousse manuellement autre chose sur `main`. C'est exactement le
+symptôme qui s'est produit avant l'ajout de ce trigger.
 
 ## Pourquoi une Issue GitHub plutôt qu'un fork + PR authentifié
 
@@ -171,7 +188,19 @@ contrainte technique.
   `canonical_key` apparaît déjà dans `data/graph.json` rechargé, sinon via
   l'API Search publique de GitHub (limitée à 10 req/min sans
   authentification — pas de polling automatique en boucle, seulement au
-  chargement et sur clic explicite).
+  chargement et sur clic explicite). Dès qu'une soumission suivie est
+  détectée dans le graphe, son nœud est automatiquement mis en évidence et
+  sa région affichée — pas besoin de relancer une recherche manuelle pour
+  voir sa propre contribution apparaître.
+- **Recherche pure, séparée de la soumission** (bouton "Rechercher") :
+  consulte le graphe par similarité d'embedding sur le texte brut de la
+  requête, sans passer par le modèle génératif WebLLM (`src/semantic.js`,
+  qui nécessite WebGPU) ni préparer la moindre soumission. Les résultats
+  s'affichent classés par similarité ; cliquer un résultat met en évidence
+  le nœud correspondant dans le graphe. Distinct du champ "Envoyer", qui
+  lui construit une représentation sémantique complète en vue d'une
+  soumission — deux opérations différentes qui partageaient auparavant le
+  même bouton.
 - **Décomposition de l'influence visible** : chaque nœud expose
   `stats.breakdown = {novelty, contribution, bridge, stability, influence}`,
   affiché sous forme de barres dans l'interface.
