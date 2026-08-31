@@ -118,8 +118,8 @@ function minimalFallback(text) {
 // aperçu (voir en-tête de fichier) — un aléa de génération locale ne doit
 // jamais empêcher l'utilisateur d'aller jusqu'à la publication, où seule
 // l'extraction serveur compte réellement.
-export async function parseWithAI(text) {
-  const e = await loadModel();
+export async function parseWithAI(text, onProgress) {
+  const e = await loadModel(onProgress);
   const reply = await e.chat.completions.create({
     messages: [
       { role: "system", content: SYSTEM_PROMPT },

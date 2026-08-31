@@ -3,7 +3,7 @@ import { parseWithAI, isWebGPUAvailable } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
-import { recordSubmission, getTracked, refreshAllPending, dismissTracked } from "./tracker.js";
+import { recordSubmission, getTracked, refreshAllPending, refreshStatus, dismissTracked } from "./tracker.js";
 import { isOAuthConfigured } from "./config.js";
 import {
   getStoredToken,
@@ -49,6 +49,7 @@ const searchClose = document.getElementById("search-close");
 const authPill = document.getElementById("auth-pill");
 const authStatusText = document.getElementById("auth-status-text");
 const authDisconnect = document.getElementById("auth-disconnect");
+const toastEl = document.getElementById("toast");
 
 let graph = { nodes: [], edges: [] };
 let lastParsed = null; // { text, semantic } — aperçu local uniquement, non-autoritaire
@@ -116,6 +117,64 @@ function reconcileTrackedWithGraph() {
 
 function setStatus(msg) {
   statusLine.textContent = msg;
+}
+
+let toastTimer = null;
+function showToast(msg, duration = 4000) {
+  clearTimeout(toastTimer);
+  toastEl.textContent = msg;
+  toastEl.classList.add("toast-visible");
+  toastTimer = setTimeout(() => toastEl.classList.remove("toast-visible"), duration);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// pollUntilResolved(entry): sondage en arrière-plan, sans jamais exiger de
+// recharger la page manuellement. Vérifie immédiatement, puis avec un
+// intervalle croissant (10s → 60s max) jusqu'à résolution ou abandon après
+// ~40 tentatives (~30 minutes). Uniquement possible pour les soumissions
+// dont le numéro d'Issue est connu (flux direct par API) — le flux de
+// repli par lien ne permet pas de savoir quand l'Issue a réellement été
+// créée sur GitHub, donc rien à sonder automatiquement dans ce cas.
+async function pollUntilResolved(entry) {
+  const maxAttempts = 40;
+  let delay = 10000;
+
+  for (let i = 0; i < maxAttempts; i++) {
+    const updated = await refreshStatus(entry);
+
+    if (updated.status === "accepted") {
+      await loadGraph();
+      renderTracker();
+      showToast("Mise à jour effectuée ✓");
+      const node = graph.nodes.find((n) => n.id === updated.node_id);
+      if (node) openSearchForNode(node);
+      return;
+    }
+    if (updated.status === "rejected") {
+      renderTracker();
+      showToast(updated.reason ? "Soumission rejetée — voir « Vos soumissions »" : "Soumission rejetée");
+      return;
+    }
+
+    entry = updated;
+    await sleep(delay);
+    delay = Math.min(delay * 1.3, 60000);
+  }
+}
+
+// openSearchForNode(node): affiche directement le résultat de recherche
+// pour un nœud donné, comme si l'utilisateur venait de le chercher
+// lui-même — utilisé après qu'une soumission suivie soit intégrée au
+// graphe, pour montrer immédiatement le résultat sans action manuelle.
+function openSearchForNode(node) {
+  resultPanel.classList.add("hidden");
+  publishPanel.classList.add("hidden");
+  renderSearchResults([{ node, similarity: 1 }], node.text);
+  renderer.setHighlight(node.id);
+  focusOnDomain(node.semantic.domain);
 }
 
 // Real embedding similarity for the live preview (mirrors scripts/embeddings.mjs
@@ -364,14 +423,15 @@ async function publishDirectly() {
     const ref = crypto.randomUUID();
     const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref });
 
-    recordSubmission({
+    const list = recordSubmission({
       number: issue.number,
       html_url: issue.html_url,
       text: lastParsed.text,
       domain: lastParsed.semantic.domain,
     });
     renderTracker();
-    publishStatus.textContent = `Publiée (Issue #${issue.number}) — suivez son traitement dans « Vos soumissions » ci-dessous.`;
+    publishStatus.textContent = "Envoyée — mise à jour automatique du site à la fin du traitement.";
+    pollUntilResolved(list[0]);
   } catch (err) {
     console.error(err);
     if (err instanceof DeviceFlowError || err instanceof GitHubApiError) {
@@ -464,8 +524,11 @@ form.addEventListener("submit", async (e) => {
       return;
     }
 
-    setStatus("Chargement du modèle local (une seule fois)…");
-    const semantic = await parseWithAI(text);
+    setStatus("Chargement du modèle local…");
+    const semantic = await parseWithAI(text, (report) => {
+      const pct = typeof report?.progress === "number" ? ` ${Math.round(report.progress * 100)}%` : "";
+      setStatus(`${report?.text || "Chargement du modèle local…"}${pct}`);
+    });
     lastParsed = { text, semantic };
 
     setStatus("");
@@ -509,8 +572,11 @@ focusClear.addEventListener("click", clearFocus);
 renderTracker();
 initAuth();
 loadGraph().then(() => {
-  refreshAllPending().then(() => {
-    reconcileTrackedWithGraph();
-    renderTracker();
-  });
+  reconcileTrackedWithGraph();
+  renderTracker();
+  for (const t of getTracked()) {
+    if (t.number && (t.status === "pending" || t.status === "unknown")) {
+      pollUntilResolved(t);
+    }
+  }
 });
