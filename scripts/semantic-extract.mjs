@@ -74,6 +74,14 @@ ces clés :
 Utilise "questionne" quand la phrase pose une question sur un sujet sans
 prendre position ("Comment financer cette transition ?") — ce n'est ni un
 accord ni un désaccord, et ça doit rester distinguable des deux.
+Si le texte est une interjection, une salutation, un mot de remplissage,
+ou toute expression qui NE PORTE AUCUNE idée, position, objection ou
+question liée à un enjeu collectif (par exemple "yo", "salut", "test",
+"lol", "ok", ou un mot isolé sans rapport avec un sujet de société), le
+domaine DOIT être "autre" et les concepts doivent décrire fidèlement ce
+que c'est ("salutation", "interjection", "texte sans substance"...) — ne
+choisis JAMAIS un domaine (santé, énergie, etc.) sous prétexte qu'il faut
+en choisir un : un texte sans substance n'appartient à aucun domaine réel.
 Ne produis rien d'autre que ce JSON.`;
 
 const ALLOWED_DOMAINS = new Set([
