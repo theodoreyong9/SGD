@@ -441,27 +441,6 @@ html, body {
   margin-bottom: 4px;
 }
 
-.tracker-refresh {
-  background: none;
-  border: 1px solid rgba(232, 227, 216, 0.25);
-  color: var(--text-muted);
-  border-radius: var(--r);
-  padding: 3px 9px;
-  font-family: var(--font-body);
-  font-size: 0.72rem;
-  cursor: pointer;
-}
-
-.tracker-refresh:hover {
-  border-color: var(--accent-agree);
-  color: var(--accent-agree);
-}
-
-.tracker-refresh:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
 .tracker-note {
   font-size: 0.7rem;
   color: var(--text-faint);
@@ -652,4 +631,115 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   #graph-canvas { display: none; }
+}
+
+/* --- Mobile (≤ 680px) ---
+   La mise en page desktop suppose assez de largeur pour aligner titre +
+   formulaire + pastille de connexion + lien GitHub sur une seule ligne,
+   et assez de hauteur pour caser sans collision le panneau de suivi
+   (bas-gauche), le toast (bas-centre) et le compteur (bas-droite). Aucun
+   des deux ne tient sur un téléphone : ce bloc réorganise plutôt que de
+   simplement rétrécir tout proportionnellement. */
+@media (max-width: 680px) {
+  .top-bar {
+    padding: 10px 14px 8px;
+  }
+
+  /* Le titre complet ("Qu'ajoutez-vous à l'espace collectif ?") + le
+     champ + les deux pastilles ne tiennent pas sur une largeur de
+     téléphone sans se marcher dessus — le placeholder du champ porte déjà
+     la même invitation, donc le titre devient redondant ici. */
+  .top-bar-headline {
+    display: none;
+  }
+
+  .top-bar-row {
+    gap: 8px 12px;
+  }
+
+  .submit-form {
+    flex: 1 1 100%;
+    max-width: none;
+    order: 1;
+  }
+
+  .auth-pill {
+    order: 2;
+    font-size: 0.72rem;
+    padding: 5px 10px;
+  }
+
+  .github-link {
+    order: 3;
+    margin-left: 0;
+    font-size: 0.75rem;
+  }
+
+  #submit-input {
+    font-size: 1rem; /* reste ≥16px effectifs pour éviter le zoom auto au focus sur iOS */
+  }
+
+  /* Les panneaux flottants gagnent presque toute la largeur plutôt que
+     d'être plafonnés à une largeur pensée pour desktop (560px/480px),
+     avec un padding réduit pour ne pas grignoter tout l'espace utile. */
+  .panel-stack {
+    top: 12px;
+    width: calc(100% - 24px);
+  }
+
+  .search-panel,
+  .result-panel,
+  .publish-panel {
+    width: 100%;
+    padding: 14px 16px;
+    max-height: 45vh;
+  }
+
+  /* Cibles tactiles plus généreuses — 0.9rem sans padding explicite est
+     trop petit à toucher précisément au doigt. */
+  .result-close,
+  .search-close {
+    font-size: 1.1rem;
+    padding: 6px;
+  }
+
+  .tracker-dismiss {
+    padding: 6px;
+    top: 0;
+    right: 0;
+  }
+
+  /* Bas de l'écran : sur desktop, suivi (gauche), toast (centre) et
+     compteur (droite) coexistent sur une seule rangée large. Sur mobile,
+     les empiler évite qu'ils se chevauchent quand plusieurs sont visibles
+     en même temps. */
+  .tracker-panel {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: auto;
+    max-height: 38vh;
+    font-size: 0.9rem;
+  }
+
+  /* Compteur décoratif (nœuds/relations) : sur desktop il vit dans un
+     coin libre ; sur mobile, cet espace est disputé par le panneau de
+     suivi et les panneaux flottants qui peuvent s'ouvrir n'importe où
+     au-dessus du graphe. Plutôt que de risquer un chevauchement avec du
+     contenu réellement utile, on le masque simplement ici. */
+  .corner-note {
+    display: none;
+  }
+
+  .toast {
+    width: calc(100% - 24px);
+    max-width: 340px;
+    bottom: 12px;
+    font-size: 0.8rem;
+    text-align: center;
+  }
+
+  .device-code {
+    font-size: 1.3rem;
+  }
 }
