@@ -1,20 +1,20 @@
-// Synthèse par IA (spec section 25): summarize a cluster of propositions
+// AI synthesis (spec section 25): summarize a cluster of propositions
 // into a short, human-readable paragraph. This NEVER replaces the
 // underlying data — it's explicitly a derived view, regenerated on demand,
 // never stored as ground truth in the graph itself.
 
 import { loadModel } from "./semantic.js";
 
-const SYSTEM_PROMPT = `Tu es un synthétiseur neutre de débats collectifs.
-On te donne une liste de propositions appartenant à un même domaine ou sous-graphe.
-Produis une synthèse de 2 à 4 phrases en français qui:
-- identifie les grandes tendances ou stratégies qui se dégagent,
-- signale les tensions ou désaccords s'il y en a,
-- ne prend jamais parti et ne juge jamais la qualité des propositions.
-Réponds uniquement avec le texte de la synthèse, sans préambule ni liste à puces.`;
+const SYSTEM_PROMPT = `You are a neutral synthesizer of collective debates.
+You are given a list of propositions belonging to the same domain or sub-graph.
+Produce a 2-to-4-sentence synthesis in English that:
+- identifies the major trends or strategies that emerge,
+- flags tensions or disagreements if there are any,
+- never takes a side and never judges the quality of the propositions.
+Reply only with the synthesis text, no preamble and no bullet list.`;
 
 export async function synthesizeSubgraph(nodes) {
-  if (nodes.length === 0) return "Aucune proposition à synthétiser pour l'instant.";
+  if (nodes.length === 0) return "No proposition to synthesize yet.";
 
   const engine = await loadModel();
   const listing = nodes

@@ -30,13 +30,12 @@ const PENDING_DIR = "submissions/pending";
 const PROCESSED_DIR = "submissions/processed";
 const EDGE_SIMILARITY_THRESHOLD = 0.55;
 
-// Seuil pour les arêtes "similaire" auto-générées (voir upsertSimilarityEdges
-// ci-dessous) — délibérément plus haut que EDGE_SIMILARITY_THRESHOLD. Ce
-// dernier sert à faire correspondre un `target_hint` (texte libre, souvent
-// court) à un concept existant ; celui-ci compare directement deux nœuds
-// entiers entre eux, un signal plus fort qui mérite une barre plus haute
-// pour ne capturer que de vraies quasi-paraphrases, pas une simple parenté
-// thématique.
+// Threshold for auto-generated "similar" edges (see upsertSimilarityEdges
+// below) — deliberately higher than EDGE_SIMILARITY_THRESHOLD. The latter
+// matches a `target_hint` (free text, often short) to an existing
+// concept; this one compares two entire nodes directly against each
+// other, a stronger signal that deserves a higher bar so it only
+// captures genuine near-paraphrases, not mere thematic kinship.
 const SIMILARITY_EDGE_THRESHOLD = 0.72;
 
 // Influence weights (spec section 12): I(v) = alpha*N + beta*R + gamma*D + delta*P
@@ -134,69 +133,69 @@ async function upsertEdges(graph, node, submission) {
   }
 }
 
-// Arêtes "similaire" : jusqu'ici, la proximité sémantique entre deux nœuds
-// DISTINCTS (donc pas fusionnés par canonical_key) ne servait qu'au calcul
-// de `novelty` et à l'aperçu client "idée proche à X%" — rien n'en gardait
-// trace dans le graphe lui-même. Deux paraphrases qui ne partagent pas
-// exactement le même canonical_key restaient donc visuellement sans lien
-// entre elles dans data/graph.json, alors qu'elles devraient apparaître
-// connectées : c'est exactement le cas 2 du protocole (paraphrase → même
-// région sémantique, pas deux idées indépendantes).
+// "similar" edges: until now, semantic proximity between two DISTINCT
+// nodes (so not merged by canonical_key) only fed into the `novelty`
+// computation and the client preview's "idea close at X%" — nothing
+// kept track of it in the graph itself. Two paraphrases that don't
+// share the exact same canonical_key therefore stayed visually
+// unconnected in data/graph.json, even though they should appear
+// connected: this is exactly protocol case 2 (paraphrase → same
+// semantic region, not two independent ideas).
 //
-// Contrairement aux arêtes de upsertEdges ci-dessus (issues d'une relation
-// affirmée par l'IA — implique, contredit, etc.), une arête "similaire" ne
-// s'accumule pas avec les répétitions : son poids reflète la proximité
-// ACTUELLE, pas un nombre d'assertions.
+// Unlike the edges from upsertEdges above (coming from a relation
+// asserted by the AI — implies, contradicts, etc.), a "similar" edge
+// doesn't accumulate with repetitions: its weight reflects the CURRENT
+// proximity, not a count of assertions.
 async function upsertSimilarityEdges(graph, node) {
   for (const other of graph.nodes) {
     if (other.id === node.id || !other.embedding) continue;
     const sim = cosineSimilarity(node.embedding, other.embedding);
     if (sim < SIMILARITY_EDGE_THRESHOLD) continue;
 
-    // ID trié pour rester stable quel que soit l'ordre de traitement des
-    // deux nœuds — une seule arête par paire, jamais une dans chaque sens.
+    // Sorted ID to stay stable regardless of the order the two nodes are
+    // processed in — a single edge per pair, never one in each direction.
     const [a, b] = [node.id, other.id].sort();
-    const edgeId = `${a}<->${b}:similaire`;
+    const edgeId = `${a}<->${b}:similar`;
     let edge = graph.edges.find((e) => e.id === edgeId);
     if (!edge) {
-      edge = { id: edgeId, source: a, target: b, type: "similaire", weight: 1, similarity: round(sim) };
+      edge = { id: edgeId, source: a, target: b, type: "similar", weight: 1, similarity: round(sim) };
       graph.edges.push(edge);
     } else {
-      edge.similarity = round(sim); // la proximité peut légèrement dériver au réembedding
+      edge.similarity = round(sim); // proximity can drift slightly on re-embedding
     }
   }
 }
 
-// Bridge (section 21): capacité d'un nœud à connecter des régions
-// sémantiques autrement peu connectées. Deux signaux, combinés à parts
-// égales:
+// Bridge (section 21): a node's ability to connect otherwise poorly
+// connected semantic regions. Two signals, combined in equal parts:
 //
-//   (a) diversité de DOMAINES déclarés parmi les voisins — le signal
-//       d'origine, gardé tel quel, mais volontairement plafonné en poids:
-//       `domaine` est une étiquette choisie par le LLM à la soumission
-//       (un enum fermé de 10 valeurs, voir semantic.js), pas une région
-//       émergente. Y faire reposer TOUT le score de pont reviendrait à
-//       figer une taxonomie a priori dans un protocole censé s'en passer.
+//   (a) diversity of declared DOMAINS among neighbors — the original
+//       signal, kept as-is, but deliberately capped in weight: `domain`
+//       is a label chosen by the LLM at submission time (a closed enum
+//       of 10 values, see semantic.js), not an emergent region. Making
+//       the ENTIRE bridge score rest on it would freeze an a-priori
+//       taxonomy into a protocol meant to do without one.
 //
-//   (b) dispersion SÉMANTIQUE entre les voisins eux-mêmes (distance
-//       cosinus moyenne de leurs embeddings, deux à deux) — indépendant
-//       de toute étiquette déclarée. Un nœud dont les voisins sont déjà
-//       proches les uns des autres ne relie pas grand-chose ; un nœud
-//       dont les voisins sont dispersés dans l'espace sémantique relie
-//       réellement des idées qui ne se touchaient pas autrement. C'est
-//       l'approximation la plus proche de "pont entre régions" qui ne
-//       dépend pas de l'enum `domaine`.
+//   (b) SEMANTIC dispersion among the neighbors themselves (average
+//       pairwise cosine distance of their embeddings) — independent of
+//       any declared label. A node whose neighbors are already close to
+//       each other doesn't connect much; a node whose neighbors are
+//       dispersed across the semantic space genuinely connects ideas
+//       that wouldn't otherwise touch. This is the closest approximation
+//       of "bridge between regions" that doesn't depend on the `domain`
+//       enum.
 //
-// Les arêtes "similaire" (voir upsertSimilarityEdges) sont volontairement
-// EXCLUES du voisinage pris en compte ici : elles relient par définition
-// des nœuds proches les uns des autres, donc les inclure ferait mécaniquement
-// baisser la dispersion moyenne — diluant le score de pont avec le signal
-// même qu'il est censé filtrer. `bridge` mesure des relations AFFIRMÉES
-// (implique, contredit, questionne, etc.), pas de la proximité de contenu.
+// "similar" edges (see upsertSimilarityEdges) are deliberately EXCLUDED
+// from the neighborhood considered here: by definition they connect
+// nodes that are already close to each other, so including them would
+// mechanically lower the average dispersion — diluting the bridge score
+// with the very signal it's meant to filter out. `bridge` measures
+// ASSERTED relations (implies, contradicts, questions, etc.), not
+// content proximity.
 function computeBridgeScore(graph, node) {
   const neighborIds = new Set();
   for (const e of graph.edges) {
-    if (e.type === "similaire") continue;
+    if (e.type === "similar") continue;
     if (e.source === node.id) neighborIds.add(e.target);
     else if (e.target === node.id) neighborIds.add(e.source);
   }
@@ -226,23 +225,22 @@ function computeBridgeScore(graph, node) {
   return 0.5 * domainDiversity + 0.5 * dispersion;
 }
 
-// Stability (section 29): pas seulement l'âge. Une proposition qui reste
-// simplement ASSISE sans que personne n'y revienne, ne la relie, ne la
-// reformule ou ne la conteste ne devrait pas atteindre la stabilité
-// maximale — la doctrine (section 29) parle explicitement de persistance
-// ET de validation structurelle continue. On combine donc :
+// Stability (section 29): not just age. A proposition that just sits
+// there with nobody ever coming back to it, connecting it, rephrasing
+// it, or contesting it shouldn't reach maximum stability — the doctrine
+// (section 29) explicitly talks about persistence AND ongoing
+// structural validation. So we combine:
 //
-//   - persistance : âge depuis la première apparition, normalisé sur 30
-//     jours (le signal d'origine, gardé).
-//   - engagement : deux signaux purement structurels, sans identité de
-//     contributeur — nombre de réapparitions de la même proposition
-//     canonique au-delà de la première (indépendant de la décroissance
-//     harmonique déjà appliquée à `contribution`), et nombre d'arêtes
-//     accumulées (être référencé par, ou référencer, d'autres nœuds).
+//   - persistence: age since first appearance, normalized over 30 days
+//     (the original signal, kept).
+//   - engagement: two purely structural signals, with no contributor
+//     identity — number of reappearances of the same canonical
+//     proposition beyond the first (independent of the harmonic decay
+//     already applied to `contribution`), and number of accumulated
+//     edges (being referenced by, or referencing, other nodes).
 //
-// La persistance seule plafonne à 0.4 : une idée ne peut pas devenir
-// "stable" par le seul fait de rester inactive un mois. Il lui faut aussi
-// de l'engagement pour approcher 1.
+// Persistence alone caps at 0.4: an idea can't become "stable" merely by
+// staying inactive for a month. It also needs engagement to approach 1.
 function computeStabilityScore(graph, node) {
   const ageMs = Date.now() - new Date(node.first_seen).getTime();
   const ageDays = ageMs / (1000 * 60 * 60 * 24);
@@ -284,16 +282,16 @@ async function main() {
     : [];
 
   if (pendingFiles.length === 0) {
-    console.log("Rien à traiter.");
+    console.log("Nothing to process.");
     return;
   }
 
-  // Un seul workflow ne traite en pratique qu'une Issue à la fois, mais on
-  // garde une boucle générale pour rester robuste si plusieurs fichiers
-  // s'accumulent (ex: rejeu manuel). Chaque résultat est consigné pour que
-  // le workflow puisse composer son commentaire de clôture avec le VRAI
-  // canonical_key — celui que le serveur a calculé, jamais celui, s'il
-  // existe encore, qu'un ancien client aurait pu inclure.
+  // In practice a single workflow run only ever processes one Issue at a
+  // time, but a general loop is kept for robustness in case several
+  // files pile up (e.g. a manual replay). Each result is logged so the
+  // workflow can compose its closing comment with the REAL canonical_key
+  // — the one the server computed, never one an old client might still
+  // have included.
   const processed = [];
 
   for (const file of pendingFiles) {
@@ -301,14 +299,14 @@ async function main() {
     const raw = JSON.parse(readFileSync(fullPath, "utf-8"));
 
     if (typeof raw.text !== "string" || raw.text.trim().length === 0) {
-      console.warn(`Ignoré (texte manquant): ${file}`);
+      console.warn(`Skipped (missing text): ${file}`);
       renameSync(fullPath, join(PROCESSED_DIR, file));
       continue;
     }
 
-    // C'est ICI, et seulement ici, que la structure sémantique et
-    // canonical_key existent. `raw.semantic` / `raw.canonical_key`, si un
-    // ancien format de soumission les contenait encore, ne sont jamais lus.
+    // This is WHERE, and only where, the semantic structure and
+    // canonical_key exist. `raw.semantic` / `raw.canonical_key`, if an
+    // old submission format still contained them, are never read.
     const semantic = await extractSemantic(raw.text);
     const key = canonicalKey(semantic);
     const submission = { text: raw.text, semantic, canonical_key: key };
@@ -319,7 +317,7 @@ async function main() {
 
     renameSync(fullPath, join(PROCESSED_DIR, file));
     console.log(
-      `Traité: ${file} -> nœud ${node.id} (participants=${node.stats.participants}, contribution=${node.stats.contribution.toFixed(3)}, novelty=${node.stats.novelty.toFixed(3)})`
+      `Processed: ${file} -> node ${node.id} (participants=${node.stats.participants}, contribution=${node.stats.contribution.toFixed(3)}, novelty=${node.stats.novelty.toFixed(3)})`
     );
 
     processed.push({
@@ -338,13 +336,13 @@ async function main() {
 
   graph.updated_at = new Date().toISOString();
   writeFileSync(GRAPH_PATH, JSON.stringify(graph, null, 2));
-  console.log(`Graphe mis à jour: ${graph.nodes.length} nœuds, ${graph.edges.length} relations.`);
+  console.log(`Graph updated: ${graph.nodes.length} nodes, ${graph.edges.length} relations.`);
 
-  // Lu par le workflow (étape "Comment + close as processed") pour inclure
-  // le vrai canonical_key dans le commentaire de clôture de l'Issue — sans
-  // ça, aucun moyen pour le suivi côté client (src/tracker.js) de savoir
-  // quel nœud correspond à sa soumission, puisque le client ne calcule
-  // plus jamais l'identité qui fait autorité.
+  // Read by the workflow (the "Comment + close as processed" step) to
+  // include the real canonical_key in the Issue's closing comment —
+  // without this, there'd be no way for the client-side tracker
+  // (src/tracker.js) to know which node corresponds to its submission,
+  // since the client never computes the authoritative identity anymore.
   for (const p of processed) {
     const nodeForBreakdown = findNode(graph, p.node_id);
     p.influence = nodeForBreakdown?.stats?.breakdown?.influence ?? null;

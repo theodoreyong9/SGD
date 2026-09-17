@@ -3,23 +3,23 @@
 // executed — this script only ever JSON.parse's it and checks it against a
 // fixed schema.
 //
-// CHANGEMENT IMPORTANT : ce validateur ne lit plus que `text`. Les
-// versions précédentes acceptaient aussi un bloc `semantic` et un
-// `canonical_key` déclarés par le client, revalidés en recalculant le
-// hash — ce qui protégeait contre un hash falsifié, mais pas contre un
-// bloc `semantic` construit à la main, sans rapport réel avec `text`, tout
-// en restant interne-cohérent. Cette structure n'a désormais plus AUCUN
-// rôle : même si un client (ancien ou malveillant) l'envoie encore, ce
-// fichier ne la lit jamais, et scripts/process-graph.mjs ne la lira pas
-// non plus. Seule l'extraction serveur (scripts/semantic-extract.mjs, sur
-// le seul `text`) produit la structure qui compte. Voir le header de ce
-// dernier fichier pour le raisonnement complet.
+// IMPORTANT CHANGE: this validator now only reads `text`. Previous
+// versions also accepted a `semantic` block and a `canonical_key`
+// declared by the client, revalidated by recomputing the hash — which
+// protected against a forged hash, but not against a hand-crafted
+// `semantic` block unrelated to `text` while staying internally
+// consistent. This structure now has NO role whatsoever: even if a
+// client (old or malicious) still sends it, this file never reads it,
+// and scripts/process-graph.mjs won't either. Only the server-side
+// extraction (scripts/semantic-extract.mjs, on `text` alone) produces
+// the structure that counts. See that file's header for the full
+// reasoning.
 //
-// Ce que CE fichier garantit encore : que `text` est bien une chaîne non
-// vide, dans une longueur raisonnable, et que l'auteur n'a pas dépassé le
-// quota de soumissions par jour. Rien de plus — la structuration
-// sémantique et l'identité (canonical_key) sont désormais entièrement la
-// responsabilité de scripts/process-graph.mjs, en aval.
+// What THIS file still guarantees: that `text` is indeed a non-empty
+// string, of reasonable length, and that the author hasn't exceeded the
+// daily submission quota. Nothing more — semantic structuring and
+// identity (canonical_key) are now entirely the responsibility of
+// scripts/process-graph.mjs, downstream.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -48,50 +48,50 @@ function ok(filename) {
 
 const payloadPath = process.env.ISSUE_PAYLOAD_PATH;
 if (!payloadPath || !existsSync(payloadPath)) {
-  fail(["ISSUE_PAYLOAD_PATH manquant ou introuvable — contexte d'exécution invalide"]);
+  fail(["ISSUE_PAYLOAD_PATH missing or not found — invalid execution context"]);
 }
 
 const { number: issueNumber, login: author, body } = JSON.parse(readFileSync(payloadPath, "utf-8"));
 const reasons = [];
 
-// 1. Ce doit être une issue de soumission SGD, pas une issue quelconque.
+// 1. This must be an SGD submission issue, not just any issue.
 if (typeof body !== "string" || !body.includes(SUBMISSION_MARKER)) {
-  fail(["l'issue ne contient pas le marqueur de soumission SGD"]);
+  fail(["the issue does not contain the SGD submission marker"]);
 }
 
-// 2. Extraction du bloc ```json ... ``` — tout le reste du corps
-// (explications, réponses citées, etc.) est ignoré.
+// 2. Extract the ```json ... ``` block — everything else in the body
+// (explanations, quoted replies, etc.) is ignored.
 const jsonMatch = body.match(/```json\s*([\s\S]*?)```/i);
 if (!jsonMatch) {
-  fail(["aucun bloc ```json``` trouvé dans le corps de l'issue"]);
+  fail(["no ```json``` block found in the issue body"]);
 }
 
 let submitted;
 try {
   submitted = JSON.parse(jsonMatch[1]);
 } catch (e) {
-  fail([`JSON invalide dans le bloc de soumission: ${e.message}`]);
+  fail([`invalid JSON in the submission block: ${e.message}`]);
 }
 
-// 3. La SEULE donnée qui compte : `text`. Tout le reste du JSON soumis
-// (semantic, canonical_key, ou n'importe quel autre champ qu'un ancien
-// client ou un attaquant aurait pu inclure) est simplement ignoré — ni lu
-// ici, ni transmis à scripts/process-graph.mjs.
+// 3. The ONLY data that matters: `text`. Everything else in the
+// submitted JSON (semantic, canonical_key, or any other field an old
+// client or an attacker might have included) is simply ignored — never
+// read here, never passed on to scripts/process-graph.mjs.
 const text = typeof submitted.text === "string" ? submitted.text.trim() : "";
 
 if (!text) {
-  reasons.push("champ 'text' manquant ou vide");
+  reasons.push("missing or empty 'text' field");
 }
 if (text.length > MAX_TEXT_LENGTH) {
-  reasons.push(`'text' dépasse ${MAX_TEXT_LENGTH} caractères`);
+  reasons.push(`'text' exceeds ${MAX_TEXT_LENGTH} characters`);
 }
 
 if (reasons.length) fail(reasons);
 
-// 4. Rate-limit par compte GitHub. Toute issue portant le marqueur est
-// labellisée AVANT ce contrôle (voir le workflow), y compris celles
-// jugées invalides ensuite — pour que le spam par texte vide ou trop long
-// compte aussi dans le quota, plutôt que d'offrir des essais gratuits.
+// 4. Rate-limit per GitHub account. Any issue carrying the marker is
+// labeled BEFORE this check (see the workflow), including ones later
+// judged invalid — so spam via an empty or too-long text also counts
+// against the quota, rather than offering free retries.
 const MAX_SUBMISSIONS_PER_DAY = 30;
 const token = process.env.GITHUB_TOKEN;
 const repo = process.env.GITHUB_REPOSITORY;
@@ -111,20 +111,20 @@ if (author && token && repo) {
     const data = await res.json();
     if (data.total_count > MAX_SUBMISSIONS_PER_DAY) {
       fail([
-        `limite de fréquence atteinte pour ${author}: ${data.total_count} soumissions dans les dernières 24h (max ${MAX_SUBMISSIONS_PER_DAY})`,
+        `rate limit reached for ${author}: ${data.total_count} submissions in the last 24h (max ${MAX_SUBMISSIONS_PER_DAY})`,
       ]);
     }
   } else {
-    console.warn("Vérification du rate-limit ignorée (échec API):", res.status);
+    console.warn("Rate-limit check skipped (API call failed):", res.status);
   }
 } else {
-  console.warn("Contexte d'auteur/token absent — rate-limit non vérifié (probablement un test local).");
+  console.warn("Missing author/token context — rate-limit not checked (likely a local test).");
 }
 
-// 5. Écrit le texte brut dans submissions/pending/ — nommé par numéro
-// d'issue, seul identifiant stable disponible à ce stade (canonical_key
-// n'existe pas encore : il sera calculé par process-graph.mjs à partir de
-// CE texte, jamais avant).
+// 5. Write the raw text to submissions/pending/ — named by issue
+// number, the only stable identifier available at this stage
+// (canonical_key doesn't exist yet: it will be computed by
+// process-graph.mjs from THIS text, never before).
 if (!existsSync(PENDING_DIR)) mkdirSync(PENDING_DIR, { recursive: true });
 
 const filename = `issue-${issueNumber}.json`;

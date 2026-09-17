@@ -1,29 +1,29 @@
 <!DOCTYPE html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Graphe — participation sémantique</title>
+<title>Graph — semantic participation</title>
 <link rel="stylesheet" href="src/styles.css" />
 </head>
 <body>
 
 <header id="top-bar" class="top-bar">
   <div class="top-bar-row">
-    <span class="top-bar-headline">Qu'ajoutez-vous à l'espace collectif&nbsp;?</span>
+    <span class="top-bar-headline">What are you adding to the collective space?</span>
     <form id="submit-form" class="submit-form" autocomplete="off">
       <input
         id="submit-input"
         type="text"
-        placeholder="Écrivez une idée, une objection, une question…"
+        placeholder="Write an idea, an objection, a question…"
         maxlength="2000"
       />
-      <button type="submit" id="submit-button">Envoyer</button>
-      <button type="button" id="search-button" class="search-button">Rechercher</button>
+      <button type="submit" id="submit-button">Send</button>
+      <button type="button" id="search-button" class="search-button">Search</button>
     </form>
     <div id="auth-pill" class="auth-pill hidden">
       <span id="auth-status-text"></span>
-      <button id="auth-disconnect" class="auth-disconnect hidden">Se déconnecter</button>
+      <button id="auth-disconnect" class="auth-disconnect hidden">Disconnect</button>
     </div>
     <a href="https://github.com/theodoreyong9/SGD" target="_blank" rel="noopener" class="github-link">GitHub ↗</a>
   </div>
@@ -36,17 +36,17 @@
   <div id="panel-stack" class="panel-stack">
     <div id="search-panel" class="search-panel hidden">
       <div class="search-header">
-        <span>Dans le graphe</span>
-        <button id="search-close" class="result-close" aria-label="Fermer">✕</button>
+        <span>In the graph</span>
+        <button id="search-close" class="result-close" aria-label="Close">✕</button>
       </div>
       <ul id="search-list" class="search-list"></ul>
     </div>
 
     <div id="result-panel" class="result-panel hidden">
       <div class="result-header">
-        <button id="result-back" class="result-back hidden">← Retour aux résultats</button>
+        <button id="result-back" class="result-back hidden">← Back to results</button>
         <span id="result-domain" class="result-domain"></span>
-        <button id="result-close" class="result-close" aria-label="Fermer">✕</button>
+        <button id="result-close" class="result-close" aria-label="Close">✕</button>
       </div>
       <div id="result-concepts" class="result-concepts"></div>
       <div id="result-relations" class="result-relations"></div>
@@ -57,14 +57,14 @@
 
       <button id="publish-button" class="publish-button" type="button"></button>
       <a id="publish-link" class="publish-button hidden" href="#" target="_blank" rel="noopener">
-        Ouvrir l'Issue de soumission sur GitHub →
+        Open the submission Issue on GitHub →
       </a>
 
       <div id="device-flow-box" class="device-flow-box hidden">
-        <p>Entrez ce code sur GitHub, dans l'onglet qui vient de s'ouvrir :</p>
+        <p>Enter this code on GitHub, in the tab that just opened:</p>
         <div id="device-code" class="device-code"></div>
         <a id="device-link" class="device-link" href="#" target="_blank" rel="noopener">
-          Rouvrir la page d'autorisation →
+          Reopen the authorization page →
         </a>
       </div>
 
@@ -76,10 +76,10 @@
 
   <aside id="tracker-panel" class="tracker-panel hidden">
     <div class="tracker-header">
-      <span>Vos soumissions</span>
+      <span>Your submissions</span>
     </div>
     <p class="tracker-note">
-      Suivi propre à ce navigateur — mise à jour automatique en arrière-plan.
+      Tracking specific to this browser — updates automatically in the background.
     </p>
     <ul id="tracker-list" class="tracker-list"></ul>
   </aside>

@@ -3,7 +3,7 @@
 // identity or authoritative scoring — the real novelty/bridge/stability
 // numbers are always recomputed server-side in scripts/process-graph.mjs
 // after merge, using the same model, but that recomputation is what's
-// trusted, never this one (spec section 35: séparation IA / protocole).
+// trusted, never this one (spec section 35: AI / protocol separation).
 //
 // Runs on WASM, so it works even where WebGPU (needed for the WebLLM chat
 // model in semantic.js) is unavailable.

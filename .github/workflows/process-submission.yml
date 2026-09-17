@@ -58,7 +58,7 @@ jobs:
         id: gate
         run: |
           if ! grep -q "sgd:submission:v1" issue-payload.json; then
-            echo "Pas une issue de soumission SGD — on ignore."
+            echo "Not an SGD submission issue — skipping."
             echo "is_submission=false" >> "$GITHUB_OUTPUT"
           else
             echo "is_submission=true" >> "$GITHUB_OUTPUT"
@@ -110,7 +110,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `Soumission invalide, aucune modification du graphe :\n\n${reasons}\n\nVous pouvez rouvrir une nouvelle soumission depuis le site.`,
+              body: `Invalid submission, no change to the graph:\n\n${reasons}\n\nYou can open a new submission from the site.`,
             });
             await github.rest.issues.update({
               owner: context.repo.owner,
@@ -124,11 +124,11 @@ jobs:
         if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
         run: npm ci --no-audit --no-fund
 
-      # Deux modèles partagent .cache/transformers : all-MiniLM-L6-v2
-      # (embeddings.mjs, ~90MB) et TinyLlama-1.1B-Chat (semantic-extract.mjs,
-      # nettement plus gros). Sans ce cache, chaque soumission retélécharge
-      # les deux depuis huggingface.co — lent, et inutilement coûteux en
-      # bande passante sur un runner partagé.
+      # Two models share .cache/transformers: all-MiniLM-L6-v2
+      # (embeddings.mjs, ~90MB) and TinyLlama-1.1B-Chat (semantic-extract.mjs,
+      # notably bigger). Without this cache, every submission would
+      # redownload both from huggingface.co — slow, and needlessly
+      # costly in bandwidth on a shared runner.
       - name: Cache local models (embeddings + extraction)
         if: steps.gate.outputs.is_submission == 'true' && steps.verdict.outputs.valid == 'true'
         uses: actions/cache@v4
@@ -146,7 +146,7 @@ jobs:
           git config user.name "sgd-bot"
           git config user.email "sgd-bot@users.noreply.github.com"
           git add data/graph.json submissions/
-          git diff --cached --quiet && echo "Rien à committer" || git commit -m "chore: update graph from issue #${{ github.event.issue.number }}"
+          git diff --cached --quiet && echo "Nothing to commit" || git commit -m "chore: update graph from issue #${{ github.event.issue.number }}"
           git push origin main
 
       - name: Comment + close as processed
@@ -155,11 +155,11 @@ jobs:
         with:
           script: |
             const fs = require("fs");
-            // Écrit par scripts/process-graph.mjs — contient le VRAI
-            // canonical_key calculé côté serveur, jamais celui qu'un
-            // client aurait pu proposer. Le format `nœud \`<hex>\`` ci-
-            // dessous est celui que src/tracker.js sait analyser
-            // (NODE_ID_PATTERN) — ne pas changer l'un sans l'autre.
+            // Written by scripts/process-graph.mjs — contains the REAL
+            // canonical_key computed server-side, never one a client
+            // might have proposed. The `node \`<hex>\`` format below is
+            // the one src/tracker.js knows how to parse
+            // (NODE_ID_PATTERN) — don't change one without the other.
             let detail = "";
             try {
               const result = JSON.parse(fs.readFileSync("processing-result.json", "utf-8"));
@@ -167,16 +167,16 @@ jobs:
                 (p) => p.source_issue === context.payload.issue.number
               );
               if (entry) {
-                detail = ` (nœud \`${entry.node_id}\`, domaine "${entry.domain}", influence ${entry.influence})`;
+                detail = ` (node \`${entry.node_id}\`, domain "${entry.domain}", influence ${entry.influence})`;
               }
             } catch (e) {
-              core.warning(`processing-result.json illisible: ${e.message}`);
+              core.warning(`processing-result.json unreadable: ${e.message}`);
             }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.payload.issue.number,
-              body: `Proposition validée et intégrée au graphe${detail}. Le graphe publié sur GitHub Pages se met à jour dans les prochaines minutes.`,
+              body: `Proposition validated and merged into the graph${detail}. The graph published on GitHub Pages will update within the next few minutes.`,
             });
             await github.rest.issues.update({
               owner: context.repo.owner,

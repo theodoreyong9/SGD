@@ -1,25 +1,25 @@
 // Minimal force-directed layout, dependency-free (fine for hundreds of nodes;
 // swap for a proper spatial index if the graph grows past a few thousand).
 //
-// CHANGEMENT DE MISE EN PAGE : le canvas ne couvre plus toute la fenêtre —
-// il vit désormais dans #graph-area, sous la barre de soumission en haut
-// de page. Toute la physique (centre d'attraction, bornes du dessin) se
-// base donc sur la taille RÉELLE du canvas (`width`/`height` ci-dessous,
-// mesurés via getBoundingClientRect), plus sur window.innerWidth/innerHeight.
+// LAYOUT CHANGE: the canvas no longer covers the whole window — it now
+// lives inside #graph-area, below the submission bar at the top of the
+// page. All the physics (attraction center, drawing bounds) is
+// therefore based on the canvas's REAL size (`width`/`height` below,
+// measured via getBoundingClientRect), not on
+// window.innerWidth/innerHeight.
 
 const COLORS = {
   edge: {
-    contredit: "rgba(166, 86, 75, 0.55)",
-    alternative_a: "rgba(166, 86, 75, 0.4)",
-    implique: "rgba(199, 154, 59, 0.45)",
-    complete: "rgba(92, 122, 153, 0.45)",
-    questionne: "rgba(150, 120, 190, 0.45)",
-    // "similaire" est auto-généré à partir des embeddings (voir
-    // scripts/process-graph.mjs), pas une relation affirmée par un
-    // participant — rendu en pointillés, plus discret, pour rester
-    // visuellement distinct des arêtes que quelqu'un a explicitement
-    // voulu créer.
-    similaire: "rgba(232, 227, 216, 0.22)",
+    contradicts: "rgba(166, 86, 75, 0.55)",
+    alternative_to: "rgba(166, 86, 75, 0.4)",
+    implies: "rgba(199, 154, 59, 0.45)",
+    completes: "rgba(92, 122, 153, 0.45)",
+    questions: "rgba(150, 120, 190, 0.45)",
+    // "similar" is auto-generated from embeddings (see
+    // scripts/process-graph.mjs), not a relation asserted by a
+    // participant — rendered dashed, more discreet, to stay visually
+    // distinct from edges someone explicitly chose to create.
+    similar: "rgba(232, 227, 216, 0.22)",
     default: "rgba(232, 227, 216, 0.15)",
   },
   node: "rgba(199, 154, 59, 0.85)",
@@ -33,9 +33,9 @@ const DIMMED_ALPHA = 0.12;
 
 export function createGraphRenderer(canvas) {
   const ctx = canvas.getContext("2d");
-  // Dimensions LOGIQUES (CSS) du canvas — pas celles de la fenêtre. Mesurées
-  // via getBoundingClientRect(), qui reflète la taille réelle une fois le
-  // layout (en-tête + zone de graphe) posé par le CSS.
+  // LOGICAL (CSS) dimensions of the canvas — not the window's. Measured
+  // via getBoundingClientRect(), which reflects the real size once the
+  // layout (header + graph area) is laid out by the CSS.
   let width = 0;
   let height = 0;
   let nodes = [];
@@ -82,10 +82,10 @@ export function createGraphRenderer(canvas) {
     highlightedId = id;
   }
 
-  // setFocusDomain(domain | null): capacité conservée dans le moteur de
-  // rendu (estompage des nœuds hors domaine) même si plus aucun élément
-  // d'UI ne la déclenche pour l'instant depuis le retrait du pill "Région"
-  // — voir src/app.js. Utilisable si un futur filtre par domaine est ajouté.
+  // setFocusDomain(domain | null): capability kept in the render engine
+  // (dimming nodes outside the domain) even though no UI element
+  // triggers it for now since the "Region" pill was removed — see
+  // src/app.js. Usable if a future domain filter is added.
   function setFocusDomain(domain) {
     focusDomain = domain || null;
   }
@@ -179,12 +179,12 @@ export function createGraphRenderer(canvas) {
       ctx.strokeStyle = COLORS.edge[e.type] || COLORS.edge.default;
       ctx.lineWidth = Math.min(1 + e.weight * 0.4, 3);
       ctx.globalAlpha = dimmed ? DIMMED_ALPHA : 1;
-      if (e.type === "similaire") ctx.setLineDash([3, 5]);
+      if (e.type === "similar") ctx.setLineDash([3, 5]);
       ctx.beginPath();
       ctx.moveTo(e.sourceNode.x, e.sourceNode.y);
       ctx.lineTo(e.targetNode.x, e.targetNode.y);
       ctx.stroke();
-      if (e.type === "similaire") ctx.setLineDash([]);
+      if (e.type === "similar") ctx.setLineDash([]);
     }
     ctx.globalAlpha = 1;
 

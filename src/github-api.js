@@ -1,9 +1,9 @@
-// Appels DIRECTS à l'API GitHub — api.github.com supporte CORS nativement
-// pour les requêtes authentifiées (Access-Control-Allow-Origin: *,
-// vérifié par un appel OPTIONS réel). Aucun relais nécessaire ici,
-// contrairement aux deux endpoints d'échange OAuth (voir src/oauth.js) :
-// une fois le token obtenu, tout le reste passe en fetch() ordinaire,
-// directement depuis le navigateur.
+// DIRECT calls to the GitHub API — api.github.com natively supports
+// CORS for authenticated requests (Access-Control-Allow-Origin: *,
+// verified via a real OPTIONS call). No relay needed here, unlike the
+// two OAuth exchange endpoints (see src/oauth.js): once the token is
+// obtained, everything else is an ordinary fetch(), directly from the
+// browser.
 
 import { OWNER, REPO } from "./config.js";
 
@@ -13,13 +13,13 @@ export class GitHubApiError extends Error {}
 
 // createSubmissionIssue(token, { text, ref }) -> { number, html_url }
 //
-// Ouvre l'Issue directement via l'API, sans jamais rediriger l'utilisateur
-// vers github.com — c'est la différence concrète avec l'ancien flux "lien
-// pré-rempli". `ref` n'a toujours aucun rôle protocolaire (voir
-// scripts/validate-submission.mjs, qui n'a jamais lu que `text`) — gardé
-// par cohérence, même si sa raison d'être initiale (retrouver l'issue via
-// l'API Search) est moins nécessaire maintenant qu'on connaît le numéro
-// d'issue immédiatement en retour de cet appel.
+// Opens the Issue directly via the API, never redirecting the user to
+// github.com — that's the concrete difference from the old "pre-filled
+// link" flow. `ref` still has no protocol role at all (see
+// scripts/validate-submission.mjs, which has only ever read `text`) —
+// kept for consistency, even though its original purpose (finding the
+// issue via the Search API) is less necessary now that the issue number
+// is known immediately from this call's own return value.
 export async function createSubmissionIssue(token, { text, ref }) {
   const payload = {
     text,
@@ -31,12 +31,12 @@ export async function createSubmissionIssue(token, { text, ref }) {
   const body = [
     SUBMISSION_MARKER,
     "",
-    "Cette Issue a été créée automatiquement par l'interface SGD, via l'API",
-    "GitHub authentifiée par votre compte — vous n'avez rien eu à faire sur",
-    "github.com pour cette soumission précise. Seul le champ `text`",
-    "ci-dessous est utilisé : la structure sémantique et l'identité de",
-    "cette proposition sont entièrement recalculées côté serveur, à partir",
-    "de ce texte seul.",
+    "This Issue was created automatically by the SGD interface, via the",
+    "GitHub API authenticated with your account — you didn't have to do",
+    "anything on github.com for this particular submission. Only the",
+    "`text` field below is used: the semantic structure and the",
+    "identity of this proposition are entirely recomputed server-side,",
+    "from this text alone.",
     "",
     "```json",
     JSON.stringify(payload, null, 2),
@@ -59,27 +59,27 @@ export async function createSubmissionIssue(token, { text, ref }) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new GitHubApiError(err.message || `Échec de création de l'Issue (HTTP ${res.status})`);
+    throw new GitHubApiError(err.message || `Failed to create the Issue (HTTP ${res.status})`);
   }
 
   const issue = await res.json();
   return { number: issue.number, html_url: issue.html_url };
 }
 
-// getIssueStatus(number) -> objet Issue complet (state, state_reason, ...)
-// Pas besoin de token pour lire une Issue publique — appel anonyme,
-// suffisant et qui n'entame pas le quota du token de l'utilisateur.
+// getIssueStatus(number) -> full Issue object (state, state_reason, ...)
+// No token needed to read a public Issue — anonymous call, sufficient
+// and doesn't eat into the user's own token quota.
 export async function getIssueStatus(number) {
   const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/issues/${number}`, {
     headers: { Accept: "application/vnd.github+json" },
   });
-  if (!res.ok) throw new GitHubApiError(`Échec de lecture de l'Issue #${number} (HTTP ${res.status})`);
+  if (!res.ok) throw new GitHubApiError(`Failed to read Issue #${number} (HTTP ${res.status})`);
   return res.json();
 }
 
-// getIssueComments(number) -> liste de commentaires (jamais levée : une
-// erreur réseau retourne juste une liste vide, le suivi reste dégradé
-// plutôt que cassé).
+// getIssueComments(number) -> list of comments (never throws: a network
+// error just returns an empty list, tracking stays degraded rather than
+// broken).
 export async function getIssueComments(number) {
   try {
     const res = await fetch(

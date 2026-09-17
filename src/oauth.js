@@ -1,26 +1,25 @@
-// Authentification GitHub Device Flow — établit UNE FOIS un token que le
-// navigateur réutilise ensuite pour publier directement via l'API
-// (src/github-api.js), sans jamais rouvrir GitHub à chaque soumission.
+// GitHub Device Flow authentication — establishes a token ONCE that the
+// browser then reuses to publish directly via the API
+// (src/github-api.js), never reopening GitHub on every submission.
 //
-// Le Device Flow ne nécessite PAS de client_secret (contrairement au flow
-// "Authorization Code" classique utilisé par la plupart des boutons
-// "Login with GitHub") — voir proxy/worker.js pour pourquoi un relais
-// reste malgré tout nécessaire : uniquement pour contourner l'absence de
-// CORS sur les 2 endpoints d'échange, jamais pour protéger un secret (il
-// n'y en a pas).
+// The Device Flow does NOT require a client_secret (unlike the classic
+// "Authorization Code" flow used by most "Login with GitHub" buttons)
+// — see proxy/worker.js for why a relay is still needed regardless:
+// only to work around the lack of CORS on the 2 exchange endpoints,
+// never to protect a secret (there is none).
 //
-// Coût réel de cette approche par rapport au lien d'Issue précédent :
-// l'utilisateur doit visiter github.com **une fois** (ou occasionnellement,
-// si le token est révoqué) pour autoriser l'app en entrant un code à 8
-// caractères. Après ça, toute soumission ultérieure dans CE navigateur
-// est un appel API direct et invisible — plus aucun aller-retour GitHub.
+// Real cost of this approach compared to the previous Issue link: the
+// user must visit github.com **once** (or occasionally, if the token is
+// revoked) to authorize the app by entering an 8-character code. After
+// that, every later submission in THIS browser is a direct, invisible
+// API call — no more round trip to GitHub.
 
 import { PROXY_URL, OAUTH_CLIENT_ID } from "./config.js";
 
 const TOKEN_STORAGE_KEY = "sgd_github_token";
-// public_repo suffit pour ouvrir des issues sur un dépôt public — pas
-// besoin d'un scope plus large (pas d'accès aux repos privés, pas
-// d'accès au compte au-delà de ce qui est nécessaire).
+// public_repo is enough to open issues on a public repo — no need for a
+// wider scope (no access to private repos, no account access beyond
+// what's necessary).
 const SCOPE = "public_repo";
 
 export function getStoredToken() {
@@ -43,14 +42,15 @@ function storeToken(token) {
   try {
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
   } catch {
-    // Navigation privée ou quota dépassé — le token ne survivra pas au
-    // rechargement, l'utilisateur devra se réauthentifier. Dégradé, pas cassé.
+    // Private browsing or quota exceeded — the token won't survive a
+    // reload, the user will have to re-authenticate. Degraded, not broken.
   }
 }
 
-// isTokenValid(token): vérifie qu'un token stocké n'a pas été révoqué, en
-// appelant DIRECTEMENT l'API (pas besoin du relais ici — api.github.com
-// supporte CORS nativement pour les requêtes authentifiées, vérifié).
+// isTokenValid(token): checks that a stored token hasn't been revoked,
+// by calling the API DIRECTLY (no need for the relay here —
+// api.github.com natively supports CORS for authenticated requests,
+// verified).
 export async function isTokenValid(token) {
   if (!token) return false;
   try {
@@ -65,14 +65,14 @@ export async function isTokenValid(token) {
 
 export class DeviceFlowError extends Error {}
 
-// startDeviceFlow(onUserCode) -> Promise<string> (le token, une fois autorisé)
+// startDeviceFlow(onUserCode) -> Promise<string> (the token, once authorized)
 //
-// onUserCode({ userCode, verificationUri }) est appelé dès que le code est
-// disponible, pour que l'UI puisse l'afficher et proposer d'ouvrir la page
-// d'autorisation (verification_uri_complete pré-remplit le code, un seul
-// clic suffit côté utilisateur). La promesse ne se résout qu'une fois
-// l'autorisation confirmée côté GitHub — poll interne, respectant
-// l'intervalle imposé par GitHub pour éviter le rate-limiting.
+// onUserCode({ userCode, verificationUri }) is called as soon as the
+// code is available, so the UI can display it and offer to open the
+// authorization page (verification_uri_complete pre-fills the code, a
+// single click is enough on the user's side). The promise only
+// resolves once authorization is confirmed on GitHub's side — internal
+// polling, respecting the interval GitHub imposes to avoid rate-limiting.
 export async function startDeviceFlow(onUserCode) {
   const codeRes = await fetch(`${PROXY_URL}/device/code`, {
     method: "POST",
@@ -80,7 +80,7 @@ export async function startDeviceFlow(onUserCode) {
     body: JSON.stringify({ client_id: OAUTH_CLIENT_ID, scope: SCOPE }),
   });
   if (!codeRes.ok) {
-    throw new DeviceFlowError("Impossible de démarrer l'autorisation GitHub (relais indisponible ?).");
+    throw new DeviceFlowError("Couldn't start GitHub authorization (relay unavailable?).");
   }
   const {
     device_code,
@@ -123,11 +123,11 @@ export async function startDeviceFlow(onUserCode) {
       continue;
     }
     throw new DeviceFlowError(
-      `Autorisation GitHub refusée ou expirée: ${data.error_description || data.error}`
+      `GitHub authorization denied or expired: ${data.error_description || data.error}`
     );
   }
 
-  throw new DeviceFlowError("Délai d'autorisation dépassé — réessayez.");
+  throw new DeviceFlowError("Authorization timed out — try again.");
 }
 
 function sleep(ms) {

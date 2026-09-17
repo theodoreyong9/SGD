@@ -1,52 +1,50 @@
-// Extraction sémantique côté SERVEUR — nouvelle source de vérité pour
+// Server-side semantic extraction — the new source of truth for
 // canonical_key.
 //
-// LE PROBLÈME QUE ÇA RÉSOUT : jusqu'ici, seul le navigateur de la personne
-// qui soumet exécutait l'extraction WebLLM (src/semantic.js), et le
-// serveur se contentait de revérifier que canonical_key correspondait bien
-// au bloc `semantic` déclaré par ce même navigateur. Ça protège contre un
-// hash falsifié isolément, mais pas contre un bloc `semantic` construit à
-// la main, sans rapport réel avec `text`, tout en restant interne-cohérent
-// avec lui-même — la personne qui soumet est justement celle dont on
-// voulait garantir la neutralité de l'extraction. Le validateur ne peut
-// rien détecter dans ce cas : structurellement, c'est un JSON parfaitement
-// valide.
+// THE PROBLEM THIS SOLVES: until now, only the submitter's own browser
+// ran the WebLLM extraction (src/semantic.js), and the server only
+// reverified that canonical_key matched the `semantic` block declared
+// by that same browser. That protects against a forged hash in
+// isolation, but not against a hand-crafted `semantic` block unrelated
+// to `text` while staying internally consistent with itself — the
+// submitter is precisely the party whose extraction neutrality we
+// wanted to guarantee. The validator can't detect this case: it's a
+// perfectly valid JSON, structurally.
 //
-// Cette version élimine le problème à la racine plutôt que de le détecter
-// après coup : scripts/validate-submission.mjs ne lit plus QUE `text` —
-// tout bloc `semantic` ou `canonical_key` que le client aurait pu inclure
-// est désormais purement et simplement ignoré. C'est CE fichier qui
-// produit la structure faisant autorité, à partir du seul texte brut (une
-// chaîne de caractères, pas une structure qu'on peut falsifier en gardant
-// une cohérence interne).
+// This version eliminates the problem at the root rather than
+// detecting it after the fact: scripts/validate-submission.mjs now
+// reads ONLY `text` — any `semantic` block or `canonical_key` a client
+// might still include is now simply, entirely ignored. It's THIS file
+// that produces the authoritative structure, from the raw text alone
+// (a string, not a structure that can be forged while keeping internal
+// consistency).
 //
-// COÛT : les runners GitHub Actions sont gratuits et illimités sur dépôt
-// public (comme pour scripts/embeddings.mjs) — pas de facture cachée. Le
-// vrai coût est la latence : une génération CPU, même sur un petit modèle,
-// prend potentiellement plusieurs dizaines de secondes. Comme le
-// traitement d'une Issue est déjà asynchrone, ce n'est pas bloquant pour
-// qui que ce soit.
+// COST: GitHub Actions runners are free and unlimited on a public repo
+// (same as scripts/embeddings.mjs) — no hidden bill. The real cost is
+// latency: a CPU generation, even on a small model, can take several
+// tens of seconds. Since processing an Issue is already asynchronous,
+// this isn't blocking for anyone.
 //
-// Le WebLLM côté client (src/semantic.js) reste utilisé pour l'APERÇU
-// instantané avant publication — même séparation IA/protocole que pour
-// les embeddings : l'aperçu client n'est jamais une garantie, seule cette
-// extraction serveur fait autorité.
+// The client-side WebLLM (src/semantic.js) stays in use for the
+// instant PREVIEW before publication — the same AI/protocol separation
+// as for embeddings: the client preview is never a guarantee, only
+// this server-side extraction is authoritative.
 //
-// LIMITE HONNÊTE : le choix de modèle ci-dessous (MODEL_ID) n'a pas pu
-// être validé en conditions réelles au moment où ce fichier a été écrit —
-// transformers.js et la disponibilité de modèles ONNX compatibles avec
-// une pipeline text-generation + chat template évoluent vite. Si
-// l'extraction échoue systématiquement en production, commencez par
-// vérifier ce nom de modèle avant de suspecter le reste du pipeline.
+// HONEST LIMIT: the model choice below (MODEL_ID) could not be
+// validated under real conditions at the time this file was written —
+// transformers.js and the availability of ONNX models compatible with
+// a text-generation + chat-template pipeline evolve quickly. If
+// extraction fails systematically in production, check this model name
+// before suspecting the rest of the pipeline.
 
 import { pipeline, env } from "@xenova/transformers";
 
 env.cacheDir = ".cache/transformers";
 
-// Modèle d'instruction compact, connu pour fonctionner avec la pipeline
-// text-generation + messages de transformers.js (chat template intégré).
-// Alternative à essayer si celui-ci pose problème en CI :
-// "Xenova/Qwen1.5-0.5B-Chat" (plus petit, potentiellement moins précis).
+// Compact instruction model, known to work with transformers.js's
+// text-generation pipeline + messages (built-in chat template).
+// Alternative to try if this one causes problems in CI:
+// "Xenova/Qwen1.5-0.5B-Chat" (smaller, potentially less accurate).
 const MODEL_ID = "Xenova/TinyLlama-1.1B-Chat-v1.0";
 
 let generatorPromise = null;
@@ -55,48 +53,48 @@ function getGenerator() {
   return generatorPromise;
 }
 
-// Copie du prompt de src/semantic.js — les deux DOIVENT rester
-// synchronisés. Une divergence n'affecte jamais l'identité (seul CE
-// fichier fait autorité pour canonical_key), seulement la cohérence entre
-// l'aperçu client et le résultat final — gênant pour l'UX, pas pour la
-// sécurité du protocole.
-const SYSTEM_PROMPT = `Tu es un extracteur sémantique déterministe et neutre.
-Étant donné une phrase soumise par un participant à un espace de participation
-collective, produis UNIQUEMENT un objet JSON (aucun texte autour) avec exactement
-ces clés :
+// Copy of the prompt in src/semantic.js — the two MUST stay in sync. A
+// divergence never affects identity (only THIS file is authoritative
+// for canonical_key), only the consistency between the client preview
+// and the final result — annoying for UX, not a protocol security
+// issue.
+const SYSTEM_PROMPT = `You are a deterministic, neutral semantic extractor.
+Given a sentence submitted by a participant in a collective participation
+space, output ONLY a JSON object (no surrounding text) with exactly
+these keys:
 {
-  "concepts": [liste de 1 à 6 concepts courts en minuscules, noms communs],
-  "relations": [{"type": "un des: implique|contredit|complete|generalise|specialise|alternative_a|depend_de|questionne", "target_hint": "concept ou proposition visée, texte court"}],
-  "objectif": "ce que la proposition cherche à obtenir, une phrase courte",
-  "moyen": "le moyen concret proposé, une phrase courte",
-  "domaine": "un des mots EXACTS suivants, rien d'autre: environnement, transport, energie, sante, education, economie, technologie, international, social, autre"
+  "concepts": [list of 1 to 6 short lowercase concepts, common nouns],
+  "relations": [{"type": "one of: implies|contradicts|completes|generalizes|specializes|alternative_to|depends_on|questions", "target_hint": "concept or proposition targeted, short text"}],
+  "objective": "what the proposition seeks to achieve, one short sentence",
+  "means": "the concrete means proposed, one short sentence",
+  "domain": "one of the EXACT following words, nothing else: environment, transport, energy, health, education, economy, technology, international, social, other"
 }
-Utilise "questionne" quand la phrase pose une question sur un sujet sans
-prendre position ("Comment financer cette transition ?") — ce n'est ni un
-accord ni un désaccord, et ça doit rester distinguable des deux.
-Si le texte est une interjection, une salutation, un mot de remplissage,
-ou toute expression qui NE PORTE AUCUNE idée, position, objection ou
-question liée à un enjeu collectif (par exemple "yo", "salut", "test",
-"lol", "ok", ou un mot isolé sans rapport avec un sujet de société), le
-domaine DOIT être "autre" et les concepts doivent décrire fidèlement ce
-que c'est ("salutation", "interjection", "texte sans substance"...) — ne
-choisis JAMAIS un domaine (santé, énergie, etc.) sous prétexte qu'il faut
-en choisir un : un texte sans substance n'appartient à aucun domaine réel.
-Ne produis rien d'autre que ce JSON.`;
+Use "questions" when the sentence raises a question about a topic without
+taking a stance ("How should this transition be funded?") — this is
+neither agreement nor disagreement, and must stay distinguishable from both.
+If the text is an interjection, a greeting, a filler word, or any
+expression that CARRIES NO idea, position, objection, or question related
+to a collective concern (for example "yo", "hi", "test", "lol", "ok", or
+an isolated word unrelated to a matter of public concern), the domain
+MUST be "other" and the concepts must faithfully describe what it is
+("greeting", "interjection", "text without substance"...) — NEVER pick a
+domain (health, energy, etc.) just because one has to be picked: text
+without substance belongs to no real domain.
+Output nothing but this JSON.`;
 
 const ALLOWED_DOMAINS = new Set([
-  "environnement", "transport", "energie", "sante", "education",
-  "economie", "technologie", "international", "social", "autre",
+  "environment", "transport", "energy", "health", "education",
+  "economy", "technology", "international", "social", "other",
 ]);
 const ALLOWED_RELATION_TYPES = new Set([
-  "implique", "contredit", "complete", "generalise", "specialise",
-  "alternative_a", "depend_de", "questionne",
+  "implies", "contradicts", "completes", "generalizes", "specializes",
+  "alternative_to", "depends_on", "questions",
 ]);
 
 function normalizeEnum(value) {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim()
     .replace(/\s+/g, "_");
@@ -104,13 +102,12 @@ function normalizeEnum(value) {
 
 // extractSemantic(text) -> { concepts, relations, objective, means, domain }
 //
-// Ne lève jamais pour un JSON malformé, un enum hors-liste, ou un échec de
-// génération : retombe sur une extraction minimale plutôt que de faire
-// échouer tout le traitement d'une soumission à cause d'un aléa de
-// génération. Une extraction pauvre donne simplement un nœud peu
-// informatif (peu de concepts, domaine "autre", novelty probablement
-// élevée faute de correspondance) — c'est un comportement dégradé
-// acceptable, pas un blocage du pipeline.
+// Never throws for malformed JSON, an out-of-enum value, or a
+// generation failure: falls back to a minimal extraction rather than
+// failing the whole processing of a submission over a generation
+// hiccup. A poor extraction simply yields a less informative node (few
+// concepts, "other" domain, novelty probably high for lack of a match)
+// — an acceptable degraded behavior, not a pipeline blocker.
 export async function extractSemantic(text) {
   const generator = await getGenerator();
 
@@ -121,17 +118,17 @@ export async function extractSemantic(text) {
 
   let raw = "";
   try {
-    // IMPORTANT : avec @xenova/transformers (le paquet épinglé dans
-    // package.json, ^2.17.2 — distinct du plus récent @huggingface/transformers
-    // qui accepte un tableau de messages directement), le pipeline
-    // text-generation n'accepte PAS `messages` tel quel. Il faut
-    // construire le prompt en texte via le chat template du tokenizer
-    // d'abord, puis appeler le générateur sur cette CHAÎNE. Appeler
-    // `generator(messages, ...)` directement — ce que faisait la version
-    // précédente de ce fichier — produit une sortie inexploitable sans
-    // lever d'erreur, d'où un repli systématique sur l'extraction
-    // minimale à chaque soumission, jamais détecté avant un vrai test en
-    // conditions réelles (voir README, section "Limites connues").
+    // IMPORTANT: with @xenova/transformers (the package pinned in
+    // package.json, ^2.17.2 — distinct from the newer
+    // @huggingface/transformers, which accepts an array of messages
+    // directly), the text-generation pipeline does NOT accept `messages`
+    // as-is. The prompt must first be built as text via the tokenizer's
+    // chat template, then the generator called on that STRING. Calling
+    // `generator(messages, ...)` directly — what the previous version of
+    // this file did — produces unusable output without throwing an
+    // error, which is why it fell back to the minimal extraction on
+    // every submission, undetected until a real test under real
+    // conditions (see README, "Known limits").
     const prompt = generator.tokenizer.apply_chat_template(messages, {
       tokenize: false,
       add_generation_prompt: true,
@@ -144,21 +141,21 @@ export async function extractSemantic(text) {
     });
     raw = output?.[0]?.generated_text ?? "";
 
-    // Selon le template de chat du modèle, generated_text peut inclure
-    // l'intégralité du prompt (système + utilisateur) suivi de la
-    // réponse — on ne garde que ce qui suit le prompt d'origine.
+    // Depending on the model's chat template, generated_text can include
+    // the entire prompt (system + user) followed by the reply — keep
+    // only what follows the original prompt.
     if (typeof raw === "string" && raw.startsWith(prompt)) {
       raw = raw.slice(prompt.length);
     }
   } catch (err) {
-    console.warn("extractSemantic: échec de génération, repli minimal —", err.message);
+    console.warn("extractSemantic: generation failed, falling back to minimal —", err.message);
     return minimalFallback(text);
   }
 
   const jsonMatch = String(raw || "").match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
     console.warn(
-      "extractSemantic: aucun JSON exploitable dans la sortie, repli minimal. Sortie brute (200 premiers caractères):",
+      "extractSemantic: no usable JSON in the output, falling back to minimal. Raw output (first 200 chars):",
       JSON.stringify(String(raw || "").slice(0, 200))
     );
     return minimalFallback(text);
@@ -168,12 +165,12 @@ export async function extractSemantic(text) {
   try {
     parsed = JSON.parse(jsonMatch[0]);
   } catch {
-    console.warn("extractSemantic: JSON invalide, repli minimal. Bloc extrait:", JSON.stringify(jsonMatch[0].slice(0, 200)));
+    console.warn("extractSemantic: invalid JSON, falling back to minimal. Extracted block:", JSON.stringify(jsonMatch[0].slice(0, 200)));
     return minimalFallback(text);
   }
 
-  const domainCandidate = normalizeEnum(parsed.domaine);
-  const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "autre";
+  const domainCandidate = normalizeEnum(parsed.domain);
+  const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "other";
 
   const relations = (Array.isArray(parsed.relations) ? parsed.relations : [])
     .map((r) => ({
@@ -193,20 +190,21 @@ export async function extractSemantic(text) {
   return {
     concepts,
     relations,
-    objective: String(parsed.objectif || "").slice(0, 300),
-    means: String(parsed.moyen || "").slice(0, 300),
+    objective: String(parsed.objective || "").slice(0, 300),
+    means: String(parsed.means || "").slice(0, 300),
     domain,
   };
 }
 
-// Repli minimal : quelques mots significatifs extraits mécaniquement du
-// texte brut, sans IA. Garantit que le pipeline avance toujours, au prix
-// d'un nœud peu informatif — préférable à un blocage total.
+// Minimal fallback: a few meaningful words extracted mechanically from
+// the raw text, without AI. Guarantees the pipeline always moves
+// forward, at the cost of a less informative node — preferable to a
+// total block.
 function minimalFallback(text) {
   const words = String(text || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^\p{L}\p{N}\s]/gu, "")
     .split(/\s+/)
     .filter((w) => w.length > 3)
@@ -216,6 +214,6 @@ function minimalFallback(text) {
     relations: [],
     objective: "",
     means: "",
-    domain: "autre",
+    domain: "other",
   };
 }

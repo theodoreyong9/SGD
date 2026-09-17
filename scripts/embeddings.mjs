@@ -3,8 +3,8 @@
 //
 // This REPLACES the Jaccard-on-concepts heuristic used in the first version
 // of process-graph.mjs. Two propositions phrased with entirely different
-// vocabulary but the same meaning ("développer le rail" vs "investir dans
-// le transport ferroviaire") now correctly show up as similar — Jaccard on
+// vocabulary but the same meaning ("expand the rail network" vs "invest in
+// railway transport") now correctly show up as similar — Jaccard on
 // extracted keywords could not see that unless the AI happened to extract
 // identical concept words.
 //

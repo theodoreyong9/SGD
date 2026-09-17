@@ -49,16 +49,16 @@ const authDisconnect = document.getElementById("auth-disconnect");
 const toastEl = document.getElementById("toast");
 
 let graph = { nodes: [], edges: [] };
-let lastParsed = null; // { text, semantic } — aperçu local uniquement, non-autoritaire
-let authToken = null; // token valide en mémoire, une fois vérifié
+let lastParsed = null; // { text, semantic } — local preview only, non-authoritative
+let authToken = null; // valid token in memory, once verified
 
-// --- Authentification (voir src/oauth.js, src/github-api.js) ---
-// Trois états possibles, gérés ici :
-//   1. OAuth non configuré (placeholders dans src/config.js) -> flux de
-//      repli par lien uniquement (comportement historique).
-//   2. OAuth configuré, pas encore de token valide -> le premier clic sur
-//      "Publier" démarre le Device Flow.
-//   3. Token valide en mémoire -> publication directe, invisible.
+// --- Authentication (see src/oauth.js, src/github-api.js) ---
+// Three possible states, handled here:
+//   1. OAuth not configured (placeholders in src/config.js) -> link-only
+//      fallback flow (legacy behavior).
+//   2. OAuth configured, no valid token yet -> the first click on
+//      "Publish" starts the Device Flow.
+//   3. Valid token in memory -> direct, invisible publication.
 async function initAuth() {
   if (!isOAuthConfigured()) {
     authPill.classList.add("hidden");
@@ -69,11 +69,11 @@ async function initAuth() {
   const stored = getStoredToken();
   if (stored && (await isTokenValid(stored))) {
     authToken = stored;
-    authStatusText.textContent = "Connecté à GitHub — publication automatique";
+    authStatusText.textContent = "Connected to GitHub — automatic publishing";
     authDisconnect.classList.remove("hidden");
   } else {
     authToken = null;
-    authStatusText.textContent = "Non connecté — la publication ouvrira une autorisation GitHub";
+    authStatusText.textContent = "Not connected — publishing will open a GitHub authorization";
     authDisconnect.classList.add("hidden");
   }
 }
@@ -81,7 +81,7 @@ async function initAuth() {
 authDisconnect.addEventListener("click", () => {
   clearStoredToken();
   authToken = null;
-  authStatusText.textContent = "Non connecté — la publication ouvrira une autorisation GitHub";
+  authStatusText.textContent = "Not connected — publishing will open a GitHub authorization";
   authDisconnect.classList.add("hidden");
 });
 
@@ -94,29 +94,28 @@ async function loadGraph() {
   reconcileTrackedWithGraph();
 }
 
-// Une fois qu'une soumission suivie a un `node_id` connu (voir
-// src/tracker.js — découvert en lisant le commentaire de clôture posté
-// sur l'Issue, PAS deviné côté client), on vérifie s'il apparaît dans le
-// graphe fraîchement rechargé et on met en évidence le nœud correspondant
-// — pas besoin de relancer une recherche manuelle pour voir sa propre
-// contribution apparaître.
+// Once a tracked submission has a known `node_id` (see src/tracker.js —
+// discovered by reading the closing comment posted on the Issue, NEVER
+// guessed client-side), check whether it shows up in the freshly
+// reloaded graph and highlight the corresponding node — no need to
+// re-run a manual search to see your own contribution appear.
 function reconcileTrackedWithGraph() {
   for (const t of getTracked()) {
     if (!t.node_id) continue;
     const node = graph.nodes.find((n) => n.id === t.node_id);
     if (node) {
       renderer.setHighlight(node.id);
-      break; // on ne met en évidence que la plus récente trouvée
+      break; // only highlight the most recently found one
     }
   }
 }
 
-// setStatus/setPublishStatus : affichent toujours un petit spinner animé
-// tant qu'un message est présent — plus jamais de texte figé qui donne
-// l'impression que l'interface est bloquée pendant un traitement en
-// cours (chargement de modèle, génération, attente du bot GitHub).
-// spinning=false permet d'afficher un message final sans spinner (ex:
-// une erreur, qui n'est plus "en cours").
+// setStatus/setPublishStatus: always show a small animated spinner as
+// long as a message is present — never a static piece of text that
+// makes the interface look stuck while processing is under way (model
+// loading, generation, waiting for the GitHub bot). spinning=false
+// allows a final message to be shown without a spinner (e.g. an error,
+// which is no longer "in progress").
 function setStatus(msg, spinning = Boolean(msg)) {
   statusLine.innerHTML = msg
     ? `${spinning ? '<span class="spinner" aria-hidden="true"></span>' : ""}<span>${escapeHtml(msg)}</span>`
@@ -141,13 +140,13 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-// pollUntilResolved(entry): sondage en arrière-plan, sans jamais exiger de
-// recharger la page manuellement. Vérifie immédiatement, puis avec un
-// intervalle croissant (10s → 60s max) jusqu'à résolution ou abandon après
-// ~40 tentatives (~30 minutes). Uniquement possible pour les soumissions
-// dont le numéro d'Issue est connu (flux direct par API) — le flux de
-// repli par lien ne permet pas de savoir quand l'Issue a réellement été
-// créée sur GitHub, donc rien à sonder automatiquement dans ce cas.
+// pollUntilResolved(entry): background polling, never requiring a
+// manual page reload. Checks immediately, then with a growing interval
+// (10s → 60s max) until resolved or given up after ~40 attempts (~30
+// minutes). Only possible for submissions whose Issue number is known
+// (direct API flow) — the link fallback flow has no way to know when
+// the Issue was actually created on GitHub, so there's nothing to poll
+// automatically in that case.
 async function pollUntilResolved(entry) {
   const maxAttempts = 40;
   let delay = 10000;
@@ -158,14 +157,14 @@ async function pollUntilResolved(entry) {
     if (updated.status === "accepted") {
       await loadGraph();
       renderTracker();
-      showToast("Mise à jour effectuée ✓");
+      showToast("Update applied ✓");
       const node = graph.nodes.find((n) => n.id === updated.node_id);
       if (node) showNodeDetail(node);
       return;
     }
     if (updated.status === "rejected") {
       renderTracker();
-      showToast(updated.reason ? "Soumission rejetée — voir « Vos soumissions »" : "Soumission rejetée");
+      showToast(updated.reason ? "Submission rejected — see “Your submissions”" : "Submission rejected");
       return;
     }
 
@@ -175,42 +174,40 @@ async function pollUntilResolved(entry) {
   }
 }
 
-// showNodeDetail(node): fiche complète d'un nœud EXISTANT du graphe —
-// domaine, concepts, relations, et décomposition de l'influence
-// (novelty/contribution/bridge/stability), exactement comme après
-// "Envoyer". Utilisé à deux endroits : automatiquement quand une
-// soumission suivie est acceptée (voir pollUntilResolved), et quand on
-// clique un résultat du panneau "Rechercher" — dans les deux cas, voir un
-// simple pourcentage de similarité sans le reste n'a pas de sens, ce
-// nœud existe déjà pleinement dans le graphe, ses vraies statistiques
-// aussi.
-// Cache de synthèse par domaine — voir renderSynthesisSection() ci-dessous
-// pour le raisonnement complet. Clé: domaine, valeur: { text, count }.
-// `count` (nombre de nœuds du domaine au moment du calcul) sert à savoir
-// si le cache est encore à jour ou s'il faut regénérer.
+// showNodeDetail(node): full sheet for an EXISTING node in the graph —
+// domain, concepts, relations, and influence breakdown
+// (novelty/contribution/bridge/stability), exactly like after "Send".
+// Used in two places: automatically when a tracked submission is
+// accepted (see pollUntilResolved), and when clicking a result in the
+// "Search" panel — in both cases, seeing a plain similarity percentage
+// without the rest wouldn't make sense, this node already fully exists
+// in the graph, its real statistics too.
+// Per-domain synthesis cache — see renderSynthesisSection() below for
+// the full reasoning. Key: domain, value: { text, count }. `count`
+// (number of nodes in the domain at computation time) is used to know
+// whether the cache is still up to date or needs regenerating.
 const synthesisCache = new Map();
 
-// renderSynthesisSection(domain) -> HTML (placeholder ou texte en cache)
+// renderSynthesisSection(domain) -> HTML (placeholder or cached text)
 //
-// CHANGEMENT IMPORTANT : la synthèse est maintenant automatique et
-// systématique (elle se déclenche toute seule dès qu'un domaine a 2+
-// propositions, plus besoin de cliquer un bouton) — mais elle reste
-// délibérément un TEXTE, jamais un NŒUD DU GRAPHE. Ce n'est pas un détail
-// technique : c'est le principe fondateur du projet ("l'IA ne devient
-// jamais une source de vérité, seulement un outil de lecture" — voir
-// README, doctrine "Séparation IA / protocole"). En faire un nœud
-// recherchable signifierait lui donner un canonical_key, une influence,
-// une place dans le graphe — comme si l'IA avait "participé" au même
-// titre qu'une vraie personne. C'est exactement ce que le projet a été
-// conçu pour éviter.
+// IMPORTANT CHANGE: the synthesis is now automatic and systematic (it
+// triggers on its own as soon as a domain has 2+ propositions, no
+// button click needed anymore) — but it deliberately stays a TEXT,
+// never a GRAPH NODE. This isn't a technical detail: it's the
+// project's founding principle ("AI never becomes a source of truth,
+// only a reading tool" — see README, "AI / protocol separation"
+// doctrine). Turning it into a searchable node would mean giving it a
+// canonical_key, an influence, a place in the graph — as if the AI had
+// "participated" the same way a real person did. That's exactly what
+// this project was designed to avoid.
 //
-// Ce qui est fait à la place, pour répondre au vrai problème ("le texte
-// disparaît") sans franchir cette ligne : mise en cache PAR DOMAINE, en
-// mémoire, pour la durée de la session. Revisiter n'importe quel nœud
-// d'un même domaine (recherche, clic sur le graphe, ou après une
-// soumission acceptée) réaffiche la MÊME synthèse instantanément, sans
-// la recalculer — elle ne "disparaît" donc plus tant que la page reste
-// ouverte. Elle n'est simplement jamais écrite dans data/graph.json.
+// What's done instead, to address the real problem ("the text
+// disappears") without crossing that line: caching PER DOMAIN, in
+// memory, for the duration of the session. Revisiting any node of the
+// same domain (search, clicking the graph, or after an accepted
+// submission) instantly re-displays the SAME synthesis, without
+// recomputing it — it therefore no longer "disappears" as long as the
+// page stays open. It is simply never written to data/graph.json.
 function renderSynthesisSection(domain) {
   const domainNodes = graph.nodes.filter((n) => n.semantic.domain === domain);
   if (domainNodes.length < 2) return "";
@@ -219,14 +216,14 @@ function renderSynthesisSection(domain) {
   if (cached && cached.count === domainNodes.length) {
     return `<div class="synth-output">${escapeHtml(cached.text)}</div>`;
   }
-  return `<div id="synth-live" class="synth-output"><span class="spinner spinner-sm" aria-hidden="true"></span> Synthèse du domaine « ${escapeHtml(domain)} » en cours…</div>`;
+  return `<div id="synth-live" class="synth-output"><span class="spinner spinner-sm" aria-hidden="true"></span> Synthesizing the “${escapeHtml(domain)}” domain…</div>`;
 }
 
-// À appeler juste après avoir inséré renderSynthesisSection() dans le DOM
-// — calcule réellement la synthèse si elle n'était pas déjà en cache, et
-// met à jour l'élément en place une fois prête. Ne fait rien si un appel
-// concurrent a déjà rempli le cache entre-temps (ex: deux nœuds du même
-// domaine consultés coup sur coup).
+// To be called right after inserting renderSynthesisSection() into the
+// DOM — actually computes the synthesis if it wasn't already cached,
+// and updates the element in place once ready. Does nothing if a
+// concurrent call already filled the cache in the meantime (e.g. two
+// nodes of the same domain consulted back to back).
 async function ensureDomainSynthesis(domain) {
   const domainNodes = graph.nodes.filter((n) => n.semantic.domain === domain);
   if (domainNodes.length < 2) return;
@@ -241,20 +238,19 @@ async function ensureDomainSynthesis(domain) {
     if (live) live.textContent = text;
   } catch (err) {
     const live = document.getElementById("synth-live");
-    if (live) live.textContent = `Synthèse indisponible: ${err.message}`;
+    if (live) live.textContent = `Synthesis unavailable: ${err.message}`;
   }
 }
 
-// showNodeDetail(node, opts): fiche complète d'un nœud EXISTANT du graphe
-// — domaine, concepts, relations, décomposition de l'influence, et
-// synthèse du domaine — exactement comme après "Envoyer". Utilisé à
-// trois endroits : automatiquement quand une
-// soumission suivie est acceptée (pollUntilResolved), quand on clique un
-// résultat du panneau "Rechercher" (fromSearch: true, affiche le bouton
-// retour), et quand on clique un point directement dans le graphe. Dans
-// tous les cas, voir un simple pourcentage de similarité sans le reste
-// n'a pas de sens : ce nœud existe déjà pleinement dans le graphe, ses
-// vraies statistiques aussi.
+// showNodeDetail(node, opts): full sheet for an EXISTING node in the
+// graph — domain, concepts, relations, influence breakdown, and domain
+// synthesis — exactly like after "Send". Used in three places:
+// automatically when a tracked submission is accepted
+// (pollUntilResolved), when clicking a result in the "Search" panel
+// (fromSearch: true, shows the back button), and when clicking a dot
+// directly in the graph. In all cases, seeing a plain similarity
+// percentage without the rest wouldn't make sense: this node already
+// fully exists in the graph, its real statistics too.
 function showNodeDetail(node, { fromSearch = false } = {}) {
   searchPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
@@ -300,14 +296,13 @@ function truncate(str, n) {
   return str.length > n ? str.slice(0, n - 1) + "…" : str;
 }
 
-// runSearch : consultation pure du graphe, sans passer par WebLLM ni
-// préparer une soumission. Recherche = navigation, distincte de proposer
-// — le bouton "Rechercher" utilise seulement le petit modèle d'embeddings
-// (src/embeddings.js, WASM), pas le modèle génératif plus lourd chargé
-// par "Envoyer" (src/semantic.js, WebGPU). On embed directement le texte
-// brut de la requête, sans extraction de concepts/objectif/moyen : pour
-// juste "aller voir ce qu'il y a", la structuration complète est un coût
-// inutile.
+// runSearch: pure consultation of the graph, without going through
+// WebLLM or preparing a submission. Search = navigation, distinct from
+// proposing — the "Search" button only uses the small embeddings model
+// (src/embeddings.js, WASM), not the heavier generative model loaded by
+// "Send" (src/semantic.js, WebGPU). The raw query text is embedded
+// directly, without extracting concepts/objective/means: for just
+// "going to see what's there", full structuring is an unnecessary cost.
 async function runSearch() {
   const text = input.value.trim();
   if (!text) return;
@@ -315,7 +310,7 @@ async function runSearch() {
   resultPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
   searchButton.disabled = true;
-  setStatus("Recherche dans le graphe…");
+  setStatus("Searching the graph…");
 
   try {
     if (graph.nodes.length === 0) {
@@ -331,7 +326,7 @@ async function runSearch() {
     renderSearchResults(ranked, text);
   } catch (err) {
     console.error(err);
-    setStatus(`Erreur de recherche: ${err.message}`);
+    setStatus(`Search error: ${err.message}`);
   } finally {
     searchButton.disabled = false;
     setStatus("");
@@ -346,7 +341,7 @@ function renderSearchResults(ranked, query) {
   lastSearchQuery = query;
   searchPanel.classList.remove("hidden");
   if (ranked.length === 0) {
-    searchList.innerHTML = `<li class="search-empty">Rien dans le graphe pour « ${escapeHtml(query)} » pour l'instant.</li>`;
+    searchList.innerHTML = `<li class="search-empty">Nothing in the graph for “${escapeHtml(query)}” yet.</li>`;
     return;
   }
   searchList.innerHTML = ranked
@@ -381,10 +376,10 @@ function renderBreakdown(node) {
   if (!node?.stats?.breakdown) return "";
   const b = node.stats.breakdown;
   const rows = [
-    ["Nouveauté", b.novelty],
-    ["Répétition (décroissante)", b.contribution],
-    ["Pont sémantique", b.bridge],
-    ["Stabilité (persistance + usage)", b.stability],
+    ["Novelty", b.novelty],
+    ["Repetition (decaying)", b.contribution],
+    ["Semantic bridge", b.bridge],
+    ["Stability (persistence + engagement)", b.stability],
   ];
   const bars = rows
     .map(
@@ -396,11 +391,11 @@ function renderBreakdown(node) {
          </div>`
     )
     .join("");
-  return `<div class="breakdown"><div class="breakdown-total">Influence : ${b.influence}</div>${bars}</div>`;
+  return `<div class="breakdown"><div class="breakdown-total">Influence: ${b.influence}</div>${bars}</div>`;
 }
 
 async function showResult({ semantic }) {
-  resultBack.classList.add("hidden"); // aperçu de soumission, jamais "depuis la recherche"
+  resultBack.classList.add("hidden"); // submission preview, never "from search"
   const { node: closest, similarity } = await findClosestNode(semantic);
 
   resultDomain.textContent = semantic.domain;
@@ -411,21 +406,21 @@ async function showResult({ semantic }) {
   const lines = [];
   let breakdownNode = null;
 
-  // Il n'y a plus de "correspondance exacte" à afficher ici : l'extraction
-  // qui fait autorité tourne côté serveur (scripts/semantic-extract.mjs),
-  // indépendamment de celle-ci. Seule la proximité par embedding reste un
-  // signal valide, puisqu'elle porte sur le contenu réel, pas sur une
-  // égalité structurelle entre deux extractions indépendantes.
+  // There's no more "exact match" to show here: the authoritative
+  // extraction runs server-side (scripts/semantic-extract.mjs),
+  // independently of this one. Only embedding proximity remains a valid
+  // signal, since it's based on the actual content, not a structural
+  // equality between two independent extractions.
   if (closest && similarity > 0.5) {
     lines.push(
-      `Idée proche à ${Math.round(similarity * 100)}% (par similarité sémantique, pas par mots-clés) d'une proposition existante : « ${escapeHtml(
+      `Idea ${Math.round(similarity * 100)}% close (by semantic similarity, not keywords) to an existing proposition: “${escapeHtml(
         closest.text
-      )} ». Aperçu local — l'extraction qui décidera réellement de la position de votre proposition dans le graphe se fait côté serveur, une fois publiée.`
+      )}”. Local preview — the extraction that will actually decide your proposition's position in the graph happens server-side, once published.`
     );
     renderer.setHighlight(closest.id);
     breakdownNode = closest;
   } else {
-    lines.push("Aucune proposition proche trouvée dans cet aperçu — ceci pourrait introduire une idée nouvelle dans le graphe.");
+    lines.push("No close proposition found in this preview — this might introduce a new idea into the graph.");
     renderer.setHighlight(null);
   }
 
@@ -443,26 +438,26 @@ async function showResult({ semantic }) {
   ensureDomainSynthesis(semantic.domain);
 }
 
-// setupPublishPanel(): configure le panneau de publication selon l'état
-// d'authentification courant. Un seul bouton visible à la fois, jamais
-// les deux formes en même temps.
+// setupPublishPanel(): configures the publish panel based on the
+// current authentication state. Only one button visible at a time,
+// never both forms at once.
 function setupPublishPanel() {
   deviceFlowBox.classList.add("hidden");
   setPublishStatus("");
 
   if (!isOAuthConfigured()) {
-    // Repli historique : lien pré-rempli, ouvre GitHub. Voir README.
+    // Legacy fallback: pre-filled link, opens GitHub. See README.
     try {
       const ref = crypto.randomUUID();
       const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref });
       publishCopy.textContent =
-        "Vous allez ouvrir une Issue GitHub pré-remplie sur votre propre compte : relisez-la, puis cliquez « Submit new issue » sur GitHub pour publier réellement — revenez ensuite ici, cet onglet suit automatiquement le traitement.";
+        "You're about to open a pre-filled GitHub Issue on your own account: review it, then click “Submit new issue” on GitHub to actually publish it — come back here afterward, this tab tracks processing automatically.";
       publishLink.href = url;
       publishLink.classList.remove("hidden");
       publishButton.classList.add("hidden");
       publishLink.onclick = () => {
         recordSubmission({ number: null, html_url: null, text: lastParsed.text, domain: lastParsed.semantic.domain });
-        setPublishStatus("Enregistrée dans « Vos soumissions » — cliquez « Submit new issue » sur GitHub pour la publier réellement.", false);
+        setPublishStatus("Recorded in “Your submissions” — click “Submit new issue” on GitHub to actually publish it.", false);
         renderTracker();
       };
       publishPanel.classList.remove("hidden");
@@ -477,42 +472,42 @@ function setupPublishPanel() {
     return;
   }
 
-  // OAuth configuré : bouton unique, comportement adaptatif.
+  // OAuth configured: single button, adaptive behavior.
   publishLink.classList.add("hidden");
   publishButton.classList.remove("hidden");
   publishButton.disabled = false;
   publishCopy.textContent = authToken
-    ? "Publication directe et automatique — aucun onglet GitHub ne s'ouvrira."
-    : "Une autorisation GitHub unique est nécessaire avant la première publication (valable pour toutes les suivantes, dans ce navigateur).";
-  publishButton.textContent = authToken ? "Publier" : "Se connecter et publier";
+    ? "Direct, automatic publishing — no GitHub tab will open."
+    : "A one-time GitHub authorization is needed before the first publication (valid for every subsequent one, in this browser).";
+  publishButton.textContent = authToken ? "Publish" : "Connect and publish";
   publishButton.onclick = () => publishDirectly();
   publishPanel.classList.remove("hidden");
 }
 
-// publishDirectly(): chemin principal quand OAuth est configuré. Démarre
-// le Device Flow si nécessaire (une fois), puis crée l'Issue via l'API —
-// aucune redirection vers github.com pour l'acte de soumission lui-même.
+// publishDirectly(): main path when OAuth is configured. Starts the
+// Device Flow if needed (once), then creates the Issue via the API —
+// no redirect to github.com for the act of submission itself.
 async function publishDirectly() {
   publishButton.disabled = true;
 
   try {
     if (!authToken) {
-      setPublishStatus("Ouverture de l'autorisation GitHub…");
+      setPublishStatus("Opening GitHub authorization…");
       authToken = await startDeviceFlow(({ userCode, verificationUri }) => {
         deviceFlowBox.classList.remove("hidden");
         deviceCodeEl.textContent = userCode;
         deviceLink.href = verificationUri;
         window.open(verificationUri, "_blank", "noopener");
-        setPublishStatus("En attente de votre autorisation sur GitHub…");
+        setPublishStatus("Waiting for your authorization on GitHub…");
       });
       deviceFlowBox.classList.add("hidden");
-      authStatusText.textContent = "Connecté à GitHub — publication automatique";
+      authStatusText.textContent = "Connected to GitHub — automatic publishing";
       authDisconnect.classList.remove("hidden");
-      publishButton.textContent = "Publier";
-      publishCopy.textContent = "Publication directe et automatique — aucun onglet GitHub ne s'ouvrira.";
+      publishButton.textContent = "Publish";
+      publishCopy.textContent = "Direct, automatic publishing — no GitHub tab will open.";
     }
 
-    setPublishStatus("Publication en cours…");
+    setPublishStatus("Publishing…");
     const ref = crypto.randomUUID();
     const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref });
 
@@ -523,18 +518,19 @@ async function publishDirectly() {
       domain: lastParsed.semantic.domain,
     });
     renderTracker();
-    // Le spinner continue de tourner ici : le traitement GitHub n'est pas
-    // fini, seul l'envoi l'est. pollUntilResolved efface ce message (et
-    // affiche le toast) une fois la vraie résolution connue — jamais de
-    // texte figé pendant que ça travaille encore en arrière-plan.
-    setPublishStatus("En cours de traitement par GitHub…");
+    // The spinner keeps running here: GitHub's processing isn't done,
+    // only the sending is. pollUntilResolved clears this message (and
+    // shows the toast) once the real resolution is known — never a
+    // static piece of text while work is still happening in the
+    // background.
+    setPublishStatus("Being processed by GitHub…");
     pollUntilResolved(list[0]);
   } catch (err) {
     console.error(err);
     if (err instanceof DeviceFlowError || err instanceof GitHubApiError) {
-      setPublishStatus(`Erreur: ${err.message}`, false);
+      setPublishStatus(`Error: ${err.message}`, false);
     } else {
-      setPublishStatus(`Erreur inattendue: ${err.message}`, false);
+      setPublishStatus(`Unexpected error: ${err.message}`, false);
     }
   } finally {
     publishButton.disabled = false;
@@ -542,10 +538,10 @@ async function publishDirectly() {
 }
 
 const STATUS_LABELS = {
-  pending: "En attente sur GitHub",
-  accepted: "Intégrée au graphe ✓",
-  rejected: "Rejetée ✕",
-  unknown: "Statut inconnu",
+  pending: "Pending on GitHub",
+  accepted: "Merged into the graph ✓",
+  rejected: "Rejected ✕",
+  unknown: "Unknown status",
 };
 
 function renderTracker() {
@@ -563,10 +559,10 @@ function renderTracker() {
           ? `<div class="tracker-reason">${escapeHtml(t.reason)}</div>`
           : "";
       const link = t.issue_url
-        ? `<a href="${t.issue_url}" target="_blank" rel="noopener" class="tracker-link">Voir l'issue →</a>`
+        ? `<a href="${t.issue_url}" target="_blank" rel="noopener" class="tracker-link">View the issue →</a>`
         : "";
-      // Spinner uniquement pour les états encore ouverts — une fois
-      // accepté ou rejeté, il n'y a plus rien "en cours" à signaler ici.
+      // Spinner only for still-open states — once accepted or rejected,
+      // there's nothing "in progress" left to signal here.
       const isActive = t.status === "pending" || t.status === "unknown";
       const spinner = isActive ? '<span class="spinner spinner-sm" aria-hidden="true"></span>' : "";
       return `
@@ -575,7 +571,7 @@ function renderTracker() {
           <div class="tracker-status">${spinner}${STATUS_LABELS[t.status] || t.status}</div>
           ${reasonLine}
           ${link}
-          <button class="tracker-dismiss" data-id="${id}" aria-label="Retirer du suivi">✕</button>
+          <button class="tracker-dismiss" data-id="${id}" aria-label="Remove from tracking">✕</button>
         </li>`;
     })
     .join("");
@@ -608,39 +604,37 @@ form.addEventListener("submit", async (e) => {
 
   try {
     if (!isWebGPUAvailable()) {
-      setStatus("WebGPU indisponible sur ce navigateur — l'analyse sémantique locale ne peut pas tourner ici.", false);
+      setStatus("WebGPU unavailable in this browser — local semantic analysis can't run here.", false);
       return;
     }
 
-    setStatus(isModelLoaded() ? "Analyse de votre texte…" : "Chargement du modèle local…");
+    setStatus(isModelLoaded() ? "Analyzing your text…" : "Loading the local model…");
     const semantic = await parseWithAI(text, (report) => {
       const progress = typeof report?.progress === "number" ? report.progress : 0;
       if (progress < 1) {
-        setStatus(`Chargement du modèle local… ${Math.round(progress * 100)}%`);
+        setStatus(`Loading the local model… ${Math.round(progress * 100)}%`);
       } else {
-        // Le callback de progression de WebLLM ne couvre que le
-        // CHARGEMENT du modèle — une fois à 100%, plus aucun événement ne
-        // survient pendant la génération elle-même. Sans ce changement de
-        // texte, le dernier message de chargement (souvent illisible,
-        // type "Finish loading on WebGPU - amd") resterait figé à
-        // l'écran pendant toute la génération, comme si l'app était
-        // bloquée — le spinner continue de tourner, mais le texte doit
-        // changer de phase pour rester honnête sur ce qui se passe.
-        setStatus("Analyse de votre texte…");
+        // WebLLM's progress callback only ever covers model LOADING —
+        // once at 100%, no further event happens during generation
+        // itself. Without this text change, the last loading message
+        // (often unreadable, like "Finish loading on WebGPU - amd")
+        // would stay frozen on screen for the whole generation, as if
+        // the app were stuck — the spinner keeps spinning, but the text
+        // has to change phase to stay honest about what's happening.
+        setStatus("Analyzing your text…");
       }
     });
     lastParsed = { text, semantic };
 
-    // Le spinner continue de tourner : showResult() fait encore une
-    // recherche par embedding avant d'afficher le résultat et le bouton
-    // "Publier" — pas d'interruption visuelle entre la génération et
-    // l'apparition du résultat.
-    setStatus("Recherche dans le graphe…");
+    // The spinner keeps running: showResult() still does an embedding
+    // search before showing the result and the "Publish" button — no
+    // visual interruption between generation and the result appearing.
+    setStatus("Searching the graph…");
     await showResult(lastParsed);
     setStatus("");
   } catch (err) {
     console.error(err);
-    setStatus(`Erreur: ${err.message}`, false);
+    setStatus(`Error: ${err.message}`, false);
   } finally {
     submitButton.disabled = false;
   }
@@ -652,7 +646,7 @@ resultClose.addEventListener("click", () => {
   renderer.setHighlight(null);
 });
 
-// --- Cliquer un nœud dans le graphe ouvre sa fiche complète ---
+// --- Clicking a node in the graph opens its full sheet ---
 renderer.onNodeClick((node) => {
   if (!node) return;
   showNodeDetail(node);

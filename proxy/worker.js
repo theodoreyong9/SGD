@@ -1,15 +1,15 @@
-// Relais minimal, SANS SECRET — sert UNIQUEMENT à contourner l'absence de
-// CORS sur les deux endpoints d'échange OAuth Device Flow de GitHub
-// (login/device/code, login/oauth/access_token — vérifié : ils répondent
-// 404 à une requête OPTIONS, contrairement à api.github.com qui répond
-// 204 avec Access-Control-Allow-Origin: *).
+// Minimal relay, WITH NO SECRET — used ONLY to work around the lack of
+// CORS on GitHub's two OAuth Device Flow exchange endpoints
+// (login/device/code, login/oauth/access_token — verified: they respond
+// 404 to an OPTIONS request, unlike api.github.com which responds 204
+// with Access-Control-Allow-Origin: *).
 //
-// Ce relais ne détient AUCUNE donnée sensible : le Device Flow ne
-// nécessite pas de client_secret (contrairement au flow "Authorization
-// Code" classique) — il n'y a donc rien à protéger ici, juste du CORS à
-// ajouter à deux appels. Tout le reste (création d'Issue, lecture de
-// statut) passe en appel direct depuis le navigateur vers api.github.com,
-// qui supporte CORS nativement — voir src/github-api.js.
+// This relay holds NO sensitive data whatsoever: the Device Flow
+// doesn't require a client_secret (unlike the classic "Authorization
+// Code" flow) — so there's nothing to protect here, just CORS to add to
+// two calls. Everything else (Issue creation, status reads) goes as a
+// direct call from the browser to api.github.com, which natively
+// supports CORS — see src/github-api.js.
 export default {
   async fetch(request) {
     const url = new URL(request.url);

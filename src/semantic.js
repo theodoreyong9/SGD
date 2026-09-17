@@ -1,15 +1,15 @@
-// Semantic layer: text -> structured representation, pour l'APERÇU
-// LOCAL uniquement.
+// Semantic layer: text -> structured representation, for the LOCAL
+// PREVIEW only.
 //
-// CHANGEMENT IMPORTANT : ce fichier ne détermine plus l'identité d'une
-// soumission. L'extraction sémantique qui fait autorité tourne désormais
-// côté serveur (scripts/semantic-extract.mjs, sur le seul `text` soumis),
-// pour empêcher qu'un client construise un bloc `semantic` sans rapport
-// réel avec son texte tout en restant interne-cohérent. `parseWithAI` et
-// `canonicalKey` ci-dessous ne servent donc plus qu'à afficher un aperçu
-// avant publication (concepts, domaine, proposition la plus proche dans
-// le graphe) — jamais transmis au serveur, jamais garanti de correspondre
-// à ce que le serveur produira pour le même texte.
+// IMPORTANT CHANGE: this file no longer determines a submission's
+// identity. The authoritative semantic extraction now runs server-side
+// (scripts/semantic-extract.mjs, on the submitted `text` alone), to
+// prevent a client from crafting a `semantic` block that's unrelated to
+// its own text while staying internally consistent. `parseWithAI` and
+// `canonicalKey` below therefore only ever drive a pre-publication
+// preview (concepts, domain, closest existing proposition in the
+// graph) — never sent to the server, never guaranteed to match what the
+// server will produce for the same text.
 
 let engine = null;
 let loadingPromise = null;
@@ -41,75 +41,76 @@ export function isWebGPUAvailable() {
   return typeof navigator !== "undefined" && !!navigator.gpu;
 }
 
-const SYSTEM_PROMPT = `Tu es un extracteur sémantique déterministe et neutre.
-Étant donné une phrase soumise par un participant à un espace de participation
-collective, produis UNIQUEMENT un objet JSON (aucun texte autour) avec exactement
-ces clés :
+const SYSTEM_PROMPT = `You are a deterministic, neutral semantic extractor.
+Given a sentence submitted by a participant in a collective participation
+space, output ONLY a JSON object (no surrounding text) with exactly
+these keys:
 {
-  "concepts": [liste de 1 à 6 concepts courts en minuscules, noms communs],
-  "relations": [{"type": "un des: implique|contredit|complete|generalise|specialise|alternative_a|depend_de|questionne", "target_hint": "concept ou proposition visée, texte court"}],
-  "objectif": "ce que la proposition cherche à obtenir, une phrase courte",
-  "moyen": "le moyen concret proposé, une phrase courte",
-  "domaine": "un des mots EXACTS suivants, rien d'autre: environnement, transport, energie, sante, education, economie, technologie, international, social, autre"
+  "concepts": [list of 1 to 6 short lowercase concepts, common nouns],
+  "relations": [{"type": "one of: implies|contradicts|completes|generalizes|specializes|alternative_to|depends_on|questions", "target_hint": "concept or proposition targeted, short text"}],
+  "objective": "what the proposition seeks to achieve, one short sentence",
+  "means": "the concrete means proposed, one short sentence",
+  "domain": "one of the EXACT following words, nothing else: environment, transport, energy, health, education, economy, technology, international, social, other"
 }
-Utilise "questionne" quand la phrase pose une question sur un sujet sans
-prendre position ("Comment financer cette transition ?") — ce n'est ni un
-accord ni un désaccord, et ça doit rester distinguable des deux.
-Si le texte est une interjection, une salutation, un mot de remplissage,
-ou toute expression qui NE PORTE AUCUNE idée, position, objection ou
-question liée à un enjeu collectif (par exemple "yo", "salut", "test",
-"lol", "ok", ou un mot isolé sans rapport avec un sujet de société), le
-domaine DOIT être "autre" et les concepts doivent décrire fidèlement ce
-que c'est ("salutation", "interjection", "texte sans substance"...) — ne
-choisis JAMAIS un domaine (santé, énergie, etc.) sous prétexte qu'il faut
-en choisir un : un texte sans substance n'appartient à aucun domaine réel.
-Ne produis rien d'autre que ce JSON.`;
+Use "questions" when the sentence raises a question about a topic without
+taking a stance ("How should this transition be funded?") — this is
+neither agreement nor disagreement, and must stay distinguishable from both.
+If the text is an interjection, a greeting, a filler word, or any
+expression that CARRIES NO idea, position, objection, or question related
+to a collective concern (for example "yo", "hi", "test", "lol", "ok", or
+an isolated word unrelated to a matter of public concern), the domain
+MUST be "other" and the concepts must faithfully describe what it is
+("greeting", "interjection", "text without substance"...) — NEVER pick a
+domain (health, energy, etc.) just because one has to be picked: text
+without substance belongs to no real domain.
+Output nothing but this JSON.`;
 
-// Ces deux listes DOIVENT rester synchronisées avec celles de
-// scripts/validate-submission.mjs (source de vérité côté serveur). Un
-// petit modèle local comme Llama-3.2-1B-Instruct ne respecte pas toujours
-// une consigne d'enum fermé à la lettre — il peut renvoyer une phrase
-// libre ("la consommation de bonbons gratuits") au lieu d'une des valeurs
-// attendues. Plutôt que de laisser une valeur invalide voyager jusqu'à
-// l'Issue GitHub pour se faire rejeter côté serveur — un aller-retour
-// complet pour rien — on la corrige ici, tout de suite, avant même
-// d'afficher un résultat à l'utilisateur.
+// These two lists MUST stay in sync with the ones in
+// scripts/validate-submission.mjs (the server-side source of truth). A
+// small local model like Llama-3.2-1B-Instruct doesn't always follow a
+// closed-enum instruction to the letter — it can return a free-form
+// phrase ("free candy consumption") instead of one of the expected
+// values. Rather than letting an invalid value travel all the way to
+// the GitHub Issue only to be rejected server-side — a full round trip
+// for nothing — it's corrected here, right away, before a result is
+// even shown to the user.
 const ALLOWED_DOMAINS = new Set([
-  "environnement", "transport", "energie", "sante", "education",
-  "economie", "technologie", "international", "social", "autre",
+  "environment", "transport", "energy", "health", "education",
+  "economy", "technology", "international", "social", "other",
 ]);
 const ALLOWED_RELATION_TYPES = new Set([
-  "implique", "contredit", "complete", "generalise", "specialise",
-  "alternative_a", "depend_de", "questionne",
+  "implies", "contradicts", "completes", "generalizes", "specializes",
+  "alternative_to", "depends_on", "questions",
 ]);
 
 function normalizeEnum(value) {
   return String(value || "")
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .toLowerCase()
     .trim()
     .replace(/\s+/g, "_");
 }
 
-// Répare les erreurs de JSON les plus fréquentes chez un petit modèle
-// local (virgule finale avant `]` ou `}`) — bien plus fréquent que du JSON
-// franchement aléatoire. Ne corrige pas tout, juste ce cas précis, qui
-// suffit à éviter la majorité des plantages observés en pratique.
+// Repairs the most common JSON mistakes made by a small local model
+// (trailing comma before `]` or `}`) — far more frequent in practice
+// than genuinely random JSON. Doesn't fix everything, just this one
+// case, which is enough to avoid most of the failures observed in
+// practice.
 function repairTrailingCommas(jsonText) {
   return jsonText.replace(/,\s*([\]}])/g, "$1");
 }
 
-// Repli minimal si le modèle local ne produit vraiment rien d'exploitable
-// — mirroir volontaire de minimalFallback() dans
-// scripts/semantic-extract.mjs, pour la même raison : ceci n'est qu'un
-// APERÇU (voir en-tête de fichier), donc un échec de génération ne doit
-// jamais bloquer l'utilisateur, juste dégrader l'aperçu affiché.
+// Minimal fallback if the local model produces nothing usable at all —
+// deliberately mirrors minimalFallback() in
+// scripts/semantic-extract.mjs, for the same reason: this is only ever
+// a PREVIEW (see file header), so a generation failure must never block
+// the user, only degrade the preview shown.
 function minimalFallback(text) {
   const words = String(text || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^\p{L}\p{N}\s]/gu, "")
     .split(/\s+/)
     .filter((w) => w.length > 3)
@@ -119,17 +120,17 @@ function minimalFallback(text) {
     relations: [],
     objective: "",
     means: "",
-    domain: "autre",
+    domain: "other",
   };
 }
 
 // parseWithAI(text) -> { concepts, relations, objective, means, domain }
 //
-// Ne lève jamais pour un JSON malformé ou absent : retombe sur un aperçu
-// minimal plutôt que de casser tout le flux de soumission. C'est un
-// aperçu (voir en-tête de fichier) — un aléa de génération locale ne doit
-// jamais empêcher l'utilisateur d'aller jusqu'à la publication, où seule
-// l'extraction serveur compte réellement.
+// Never throws for malformed or missing JSON: falls back to a minimal
+// preview rather than breaking the whole submission flow. This is a
+// preview (see file header) — a local-generation hiccup must never
+// prevent the user from reaching publication, where only the server's
+// own extraction actually counts.
 export async function parseWithAI(text, onProgress) {
   const e = await loadModel(onProgress);
   const reply = await e.chat.completions.create({
@@ -144,7 +145,7 @@ export async function parseWithAI(text, onProgress) {
   const raw = reply.choices[0].message.content.trim();
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) {
-    console.warn("parseWithAI: aucun JSON exploitable dans la sortie du modèle, repli minimal.");
+    console.warn("parseWithAI: no usable JSON in the model's output, falling back to minimal.");
     return minimalFallback(text);
   }
 
@@ -155,22 +156,22 @@ export async function parseWithAI(text, onProgress) {
     try {
       parsed = JSON.parse(repairTrailingCommas(jsonMatch[0]));
     } catch (e2) {
-      console.warn("parseWithAI: JSON invalide même après réparation, repli minimal —", e2.message);
+      console.warn("parseWithAI: invalid JSON even after repair, falling back to minimal —", e2.message);
       return minimalFallback(text);
     }
   }
 
-  const domainCandidate = normalizeEnum(parsed.domaine);
-  const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "autre";
+  const domainCandidate = normalizeEnum(parsed.domain);
+  const domain = ALLOWED_DOMAINS.has(domainCandidate) ? domainCandidate : "other";
 
   const relations = (Array.isArray(parsed.relations) ? parsed.relations : [])
     .map((r) => ({
       type: normalizeEnum(r?.type),
       target_hint: r?.target_hint || "",
     }))
-    // Une relation dont le type est hors-liste est abandonnée plutôt que
-    // requalifiée au hasard : le modèle n'a produit qu'un type sur les 8
-    // permis, on ne peut pas deviner lequel il voulait dire.
+    // A relation whose type is outside the allowed list is dropped rather
+    // than reassigned at random: the model only produced one type out of
+    // the 8 allowed, and there's no way to guess which one it meant.
     .filter((r) => ALLOWED_RELATION_TYPES.has(r.type) && r.target_hint);
 
   const concepts = Array.isArray(parsed.concepts) ? parsed.concepts : [];
@@ -179,24 +180,23 @@ export async function parseWithAI(text, onProgress) {
   return {
     concepts,
     relations,
-    objective: parsed.objectif || "",
-    means: parsed.moyen || "",
+    objective: parsed.objective || "",
+    means: parsed.means || "",
     domain,
   };
 }
 
-// ---- Canonicalisation locale (miroir de scripts/canonical.mjs) ----
-// AVERTISSEMENT : contrairement à ce que ce commentaire disait avant le
-// passage à l'extraction serveur, la CI ne recalcule PLUS et ne compare
-// PLUS jamais ce que cette fonction produit — voir l'en-tête de fichier.
-// `canonicalKey` reste ici uniquement comme utilitaire potentiellement
-// utile (ex: dédupliquer localement plusieurs aperçus dans une session),
-// mais rien dans l'app ne l'utilise plus pour décider quoi que ce soit
-// côté identité. Gardée synchronisée avec scripts/canonical.mjs par
-// habitude, pas par nécessité protocolaire.
+// ---- Local canonicalization (mirrors scripts/canonical.mjs) ----
+// WARNING: contrary to what this comment used to say before the move to
+// server-side extraction, CI no longer recomputes or ever compares what
+// this function produces — see the file header above. `canonicalKey`
+// stays here only as a potentially useful utility (e.g. locally
+// deduplicating several previews within one session), but nothing in
+// the app uses it anymore to decide anything on the identity side. Kept
+// in sync with scripts/canonical.mjs out of habit, not protocol necessity.
 
 function stripDiacritics(str) {
-  return str.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return str.normalize("NFD").replace(/[̀-ͯ]/g, "");
 }
 
 function normalizeString(str) {
