@@ -10,21 +10,35 @@
             prompt floats above it with no card/border; results expand inline
             below the prompt rather than in a modal. Left-aligned once results
             appear (reading a list), centered before that (a single invitation).
+  Depth   — floating surfaces (panels, tracker, toast) read as frosted glass over
+            the graph: a soft blur, a large soft-edged shadow, and a hairline
+            border rather than a flat solid card — the graph should feel like it
+            continues underneath them, not like it's been covered up.
   Principle — the graph IS the interface; text-entry is the only chrome.
 */
 
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 
 :root {
   --bg: #10141c;
+  --bg-elevated: #131824;
   --surface: #171d28;
+  --surface-glass: rgba(23, 29, 40, 0.82);
   --text: #e8e3d8;
   --text-muted: rgba(232, 227, 216, 0.52);
   --text-faint: rgba(232, 227, 216, 0.28);
   --accent-agree: #c79a3b;
+  --accent-agree-soft: rgba(199, 154, 59, 0.14);
   --accent-oppose: #a6564b;
   --accent-neutral: #5c7a99;
-  --r: 4px;
+  --border-hairline: rgba(232, 227, 216, 0.12);
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-pill: 999px;
+  --shadow-panel: 0 24px 60px -16px rgba(0, 0, 0, 0.6), 0 8px 24px -8px rgba(0, 0, 0, 0.45);
+  --shadow-soft: 0 8px 24px -10px rgba(0, 0, 0, 0.4);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --font-display: 'Fraunces', serif;
   --font-body: 'IBM Plex Sans', sans-serif;
 }
@@ -42,14 +56,23 @@ html, body {
   flex-direction: column;
 }
 
-/* En-tête fixe : le champ de soumission n'est plus une invite centrée
-   flottant au-dessus du graphe, mais une barre persistante en haut de
-   page. Le graphe occupe tout le reste de la page en dessous. */
+body {
+  background:
+    radial-gradient(1200px 800px at 15% -10%, rgba(199, 154, 59, 0.07), transparent 60%),
+    radial-gradient(1000px 700px at 100% 110%, rgba(92, 122, 153, 0.08), transparent 55%),
+    var(--bg);
+}
+
+/* Fixed header: the submission field is no longer a centered prompt
+   floating above the graph, but a persistent bar at the top of the
+   page. The graph occupies the rest of the page below it. */
 .top-bar {
   flex-shrink: 0;
-  padding: 14px 24px 10px;
-  background: var(--surface);
-  border-bottom: 1px solid rgba(232, 227, 216, 0.14);
+  padding: 16px 24px 12px;
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-hairline);
+  box-shadow: var(--shadow-soft);
+  position: relative;
   z-index: 3;
 }
 
@@ -58,7 +81,7 @@ html, body {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 24px;
-  max-width: 980px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 
@@ -74,7 +97,7 @@ html, body {
 .graph-area {
   position: relative;
   flex: 1;
-  min-height: 0; /* indispensable pour qu'un enfant flex avec overflow se dimensionne correctement */
+  min-height: 0; /* essential so a flex child with overflow sizes correctly */
   overflow: hidden;
 }
 
@@ -90,16 +113,21 @@ html, body {
 
 .submit-form {
   flex: 1 1 260px;
+  min-width: 0; /* a flex item that is itself a flex container won't shrink below its children's combined min-content size otherwise */
   display: flex;
-  gap: 10px;
+  align-items: center;
+  gap: 6px;
   max-width: 640px;
-  border-bottom: 1px solid rgba(232, 227, 216, 0.18);
-  padding-bottom: 6px;
-  transition: border-color 0.2s ease;
+  background: rgba(232, 227, 216, 0.05);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-pill);
+  padding: 5px 6px 5px 18px;
+  transition: border-color 0.2s var(--ease), background 0.2s var(--ease);
 }
 
 .submit-form:focus-within {
-  border-bottom-color: var(--accent-agree);
+  border-color: rgba(199, 154, 59, 0.55);
+  background: rgba(232, 227, 216, 0.07);
 }
 
 #submit-input {
@@ -109,8 +137,9 @@ html, body {
   outline: none;
   color: var(--text);
   font-family: var(--font-body);
-  font-size: 1.05rem;
+  font-size: 1rem;
   padding: 8px 4px;
+  min-width: 0;
 }
 
 #submit-input::placeholder {
@@ -118,17 +147,27 @@ html, body {
 }
 
 #submit-button {
-  background: none;
+  background: var(--accent-agree);
   border: none;
-  color: var(--accent-agree);
+  border-radius: var(--r-pill);
+  color: #1a1406;
   font-family: var(--font-body);
-  font-size: 0.95rem;
-  font-weight: 500;
+  font-size: 0.9rem;
+  font-weight: 600;
   cursor: pointer;
-  padding: 8px 4px;
+  padding: 9px 18px;
+  flex-shrink: 0;
+  transition: filter 0.15s var(--ease), transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
+}
+
+#submit-button:hover:not(:disabled) {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -6px rgba(199, 154, 59, 0.55);
 }
 
 #submit-button:disabled {
+  background: rgba(232, 227, 216, 0.12);
   color: var(--text-faint);
   cursor: default;
 }
@@ -136,15 +175,19 @@ html, body {
 .search-button {
   background: none;
   border: none;
+  border-radius: var(--r-pill);
   color: var(--text-muted);
   font-family: var(--font-body);
-  font-size: 0.95rem;
+  font-size: 0.88rem;
   cursor: pointer;
-  padding: 8px 4px;
+  padding: 9px 14px;
+  flex-shrink: 0;
+  transition: color 0.15s var(--ease), background 0.15s var(--ease);
 }
 
-.search-button:hover {
+.search-button:hover:not(:disabled) {
   color: var(--accent-neutral);
+  background: rgba(92, 122, 153, 0.12);
 }
 
 .search-button:disabled {
@@ -152,16 +195,15 @@ html, body {
   cursor: default;
 }
 
-/* Les panneaux (recherche, résultat, publication) flottent désormais en
-   haut de la ZONE DE GRAPHE (position: absolute dans #graph-area, qui est
-   position: relative) plutôt que centrés sur toute la page — la barre du
-   haut appartient maintenant à un autre bloc, ils ne doivent plus se
-   positionner par rapport à elle. */
-/* Conteneur partagé : search-panel, result-panel et publish-panel peuvent
-   être visibles simultanément (résultat + publication après une
-   soumission) — les empiler ici en flux normal évite qu'ils se
-   chevauchent, plutôt que de leur donner à chacun un `position: absolute`
-   individuel avec le même décalage. */
+/* Panels (search, result, publish) now float at the top of the GRAPH
+   AREA (position: absolute inside #graph-area, which is position:
+   relative) rather than centered on the whole page — the top bar now
+   belongs to a separate block, they no longer need to position
+   themselves relative to it. */
+/* Shared container: search-panel, result-panel and publish-panel can be
+   visible at the same time (result + publish after a submission) —
+   stacking them here in normal flow avoids overlap, rather than giving
+   each its own individual `position: absolute` with the same offset. */
 .panel-stack {
   position: absolute;
   top: 20px;
@@ -174,16 +216,27 @@ html, body {
   gap: 16px;
   max-height: calc(100% - 40px);
   overflow-y: auto;
-  pointer-events: none; /* seuls les panneaux enfants (pointer-events: auto) sont cliquables */
+  pointer-events: none; /* only child panels (pointer-events: auto) are clickable */
+}
+
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .search-panel {
   pointer-events: auto;
   width: min(560px, 90vw);
-  background: rgba(23, 29, 40, 0.94);
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--border-hairline);
   border-left: 2px solid var(--accent-neutral);
-  padding: 14px 20px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  padding: 16px 22px;
   text-align: left;
+  animation: panel-in 0.22s var(--ease);
 }
 
 .search-header {
@@ -201,17 +254,18 @@ html, body {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
 .search-item {
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 6px 8px;
-  border-radius: var(--r);
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-size: 0.85rem;
+  transition: background 0.15s var(--ease);
 }
 
 .search-item:hover {
@@ -236,8 +290,8 @@ html, body {
 
 .status-line {
   min-height: 1.4em;
-  max-width: 980px;
-  margin: 6px auto 0;
+  max-width: 1180px;
+  margin: 8px auto 0;
   font-size: 0.85rem;
   color: var(--text-muted);
   display: flex;
@@ -246,9 +300,9 @@ html, body {
   gap: 8px;
 }
 
-/* Spinner réutilisable — indique un traitement en cours (chargement de
-   modèle, génération, attente du traitement GitHub) plutôt que de laisser
-   un texte statique donner l'impression que l'interface est figée. */
+/* Reusable spinner — signals ongoing processing (model loading,
+   generation, waiting on GitHub) rather than leaving static text that
+   makes the interface look frozen. */
 .spinner {
   display: inline-block;
   width: 13px;
@@ -277,48 +331,58 @@ html, body {
 .publish-panel {
   pointer-events: auto;
   width: min(480px, 90vw);
-  background: rgba(23, 29, 40, 0.94);
-  border-radius: var(--r);
-  padding: 18px 20px;
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  padding: 22px 24px;
   text-align: center;
+  animation: panel-in 0.22s var(--ease);
 }
 
 .publish-copy {
   font-size: 0.85rem;
   color: var(--text-muted);
   line-height: 1.5;
-  margin-bottom: 14px;
+  margin-bottom: 16px;
 }
 
 .publish-button {
   display: inline-block;
   background: var(--accent-agree);
-  color: var(--bg);
+  color: #1a1406;
   border: none;
-  border-radius: var(--r);
-  padding: 10px 18px;
+  border-radius: var(--r-pill);
+  padding: 11px 22px;
   font-family: var(--font-body);
   font-size: 0.9rem;
-  font-weight: 500;
+  font-weight: 600;
   cursor: pointer;
   text-decoration: none;
+  transition: filter 0.15s var(--ease), transform 0.15s var(--ease), box-shadow 0.15s var(--ease);
 }
 
-.publish-button:hover {
+.publish-button:hover:not(:disabled) {
   filter: brightness(1.08);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -6px rgba(199, 154, 59, 0.55);
 }
 
 .publish-button:disabled {
   opacity: 0.6;
   cursor: default;
   filter: none;
+  transform: none;
+  box-shadow: none;
 }
 
 .device-flow-box {
   margin-top: 16px;
-  padding: 14px;
+  padding: 16px;
   border: 1px dashed rgba(232, 227, 216, 0.25);
-  border-radius: var(--r);
+  border-radius: var(--r-md);
   font-size: 0.82rem;
   color: var(--text-muted);
 }
@@ -343,21 +407,24 @@ html, body {
   left: 50%;
   transform: translateX(-50%) translateY(8px);
   z-index: 5;
-  background: rgba(23, 29, 40, 0.95);
-  border: 1px solid rgba(199, 154, 59, 0.4);
-  border-radius: var(--r);
-  padding: 10px 18px;
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid rgba(199, 154, 59, 0.35);
+  border-radius: var(--r-pill);
+  box-shadow: var(--shadow-panel);
+  padding: 11px 20px;
   font-size: 0.85rem;
   color: var(--text);
   opacity: 0;
-  transition: opacity 0.4s ease, transform 0.4s ease;
+  transition: opacity 0.4s var(--ease), transform 0.4s var(--ease);
   pointer-events: none;
   display: block;
 }
 
-/* Volontairement une classe dédiée plutôt que de réutiliser .hidden : la
-   règle globale .hidden utilise !important (display:none), ce qui casserait
-   la transition d'opacité du toast si on l'utilisait ici aussi. */
+/* Deliberately a dedicated class rather than reusing .hidden: the
+   global .hidden rule uses !important (display:none), which would
+   break the toast's opacity transition if it were used here too. */
 .toast.toast-visible {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
@@ -369,10 +436,10 @@ html, body {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: rgba(16, 20, 28, 0.6);
-  border: 1px solid rgba(232, 227, 216, 0.18);
-  border-radius: var(--r);
-  padding: 6px 12px;
+  background: rgba(232, 227, 216, 0.05);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-pill);
+  padding: 7px 8px 7px 14px;
   font-size: 0.78rem;
   color: var(--text-muted);
 }
@@ -381,11 +448,12 @@ html, body {
   background: none;
   border: 1px solid rgba(232, 227, 216, 0.25);
   color: var(--text-muted);
-  border-radius: var(--r);
-  padding: 3px 9px;
+  border-radius: var(--r-pill);
+  padding: 4px 11px;
   font-family: var(--font-body);
   font-size: 0.72rem;
   cursor: pointer;
+  transition: border-color 0.15s var(--ease), color 0.15s var(--ease);
 }
 
 .auth-disconnect:hover {
@@ -399,6 +467,7 @@ html, body {
   color: var(--text-muted);
   font-size: 0.8rem;
   text-decoration: none;
+  transition: color 0.15s var(--ease);
 }
 
 .github-link:hover {
@@ -425,11 +494,15 @@ html, body {
   width: min(320px, calc(100vw - 44px));
   max-height: 50vh;
   overflow-y: auto;
-  background: rgba(23, 29, 40, 0.92);
-  border: 1px solid rgba(232, 227, 216, 0.15);
-  border-radius: var(--r);
-  padding: 14px 16px;
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  padding: 16px 18px;
   font-family: var(--font-body);
+  animation: panel-in 0.22s var(--ease);
 }
 
 .tracker-header {
@@ -458,8 +531,10 @@ html, body {
 
 .tracker-item {
   position: relative;
+  background: rgba(232, 227, 216, 0.03);
   border-left: 2px solid rgba(232, 227, 216, 0.2);
-  padding: 6px 22px 6px 10px;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  padding: 8px 24px 8px 12px;
   font-size: 0.78rem;
 }
 
@@ -494,24 +569,35 @@ html, body {
 
 .tracker-dismiss {
   position: absolute;
-  top: 4px;
-  right: 2px;
+  top: 6px;
+  right: 4px;
   background: none;
   border: none;
   color: var(--text-faint);
   cursor: pointer;
   font-size: 0.75rem;
+  transition: color 0.15s var(--ease);
+}
+
+.tracker-dismiss:hover {
+  color: var(--accent-oppose);
 }
 
 .result-panel {
   pointer-events: auto;
   width: min(560px, 90vw);
-  background: rgba(23, 29, 40, 0.9);
+  background: var(--surface-glass);
+  backdrop-filter: blur(20px) saturate(140%);
+  -webkit-backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--border-hairline);
   border-left: 2px solid var(--accent-agree);
-  padding: 18px 20px;
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-panel);
+  padding: 20px 24px;
   text-align: left;
   max-height: 40vh;
   overflow-y: auto;
+  animation: panel-in 0.22s var(--ease);
 }
 
 .result-header {
@@ -535,6 +621,7 @@ html, body {
   font-size: 0.78rem;
   font-family: var(--font-body);
   padding: 0;
+  transition: color 0.15s var(--ease);
 }
 
 .result-back:hover {
@@ -547,21 +634,27 @@ html, body {
   color: var(--text-faint);
   cursor: pointer;
   font-size: 0.9rem;
+  transition: color 0.15s var(--ease);
+}
+
+.result-close:hover {
+  color: var(--text);
 }
 
 .result-concepts {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 
 .result-concepts span {
   font-size: 0.8rem;
   color: var(--text-muted);
-  border: 1px solid rgba(232, 227, 216, 0.18);
-  border-radius: var(--r);
-  padding: 3px 9px;
+  background: rgba(232, 227, 216, 0.04);
+  border: 1px solid var(--border-hairline);
+  border-radius: var(--r-pill);
+  padding: 4px 11px;
 }
 
 .result-relations {
@@ -571,16 +664,16 @@ html, body {
 }
 
 .breakdown {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(232, 227, 216, 0.12);
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-hairline);
 }
 
 .breakdown-total {
   font-family: var(--font-display);
   font-size: 0.95rem;
   color: var(--accent-agree);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
 .breakdown-row {
@@ -590,14 +683,14 @@ html, body {
   gap: 8px;
   font-size: 0.78rem;
   color: var(--text-muted);
-  margin-bottom: 5px;
+  margin-bottom: 6px;
 }
 
 .breakdown-bar {
   display: block;
-  height: 4px;
-  background: rgba(232, 227, 216, 0.1);
-  border-radius: 2px;
+  height: 5px;
+  background: rgba(232, 227, 216, 0.08);
+  border-radius: var(--r-pill);
   overflow: hidden;
 }
 
@@ -605,6 +698,7 @@ html, body {
   display: block;
   height: 100%;
   background: var(--accent-agree);
+  border-radius: var(--r-pill);
 }
 
 .breakdown-val {
@@ -612,7 +706,10 @@ html, body {
 }
 
 .synth-output {
-  margin-top: 10px;
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--accent-agree-soft);
+  border-radius: var(--r-md);
   font-size: 0.85rem;
   line-height: 1.6;
   color: var(--text);
@@ -631,24 +728,25 @@ html, body {
 
 @media (prefers-reduced-motion: reduce) {
   #graph-canvas { display: none; }
+  .search-panel, .publish-panel, .tracker-panel, .result-panel { animation: none; }
 }
 
 /* --- Mobile (≤ 680px) ---
-   La mise en page desktop suppose assez de largeur pour aligner titre +
-   formulaire + pastille de connexion + lien GitHub sur une seule ligne,
-   et assez de hauteur pour caser sans collision le panneau de suivi
-   (bas-gauche), le toast (bas-centre) et le compteur (bas-droite). Aucun
-   des deux ne tient sur un téléphone : ce bloc réorganise plutôt que de
-   simplement rétrécir tout proportionnellement. */
+   The desktop layout assumes enough width to line up title + form +
+   auth pill + GitHub link on a single row, and enough height to fit
+   the tracker panel (bottom-left), the toast (bottom-center) and the
+   counter (bottom-right) without colliding. Neither fits on a phone:
+   this block reorganizes rather than just shrinking everything
+   proportionally. */
 @media (max-width: 680px) {
   .top-bar {
-    padding: 10px 14px 8px;
+    padding: 12px 14px 10px;
   }
 
-  /* Le titre complet ("Qu'ajoutez-vous à l'espace collectif ?") + le
-     champ + les deux pastilles ne tiennent pas sur une largeur de
-     téléphone sans se marcher dessus — le placeholder du champ porte déjà
-     la même invitation, donc le titre devient redondant ici. */
+  /* The full title ("What are you adding to the collective space?") +
+     the field + the two pills don't fit on phone width without
+     stepping on each other — the field's placeholder already carries
+     the same invitation, so the title becomes redundant here. */
   .top-bar-headline {
     display: none;
   }
@@ -676,12 +774,12 @@ html, body {
   }
 
   #submit-input {
-    font-size: 1rem; /* reste ≥16px effectifs pour éviter le zoom auto au focus sur iOS */
+    font-size: 1rem; /* stays ≥16px effective to avoid iOS auto-zoom on focus */
   }
 
-  /* Les panneaux flottants gagnent presque toute la largeur plutôt que
-     d'être plafonnés à une largeur pensée pour desktop (560px/480px),
-     avec un padding réduit pour ne pas grignoter tout l'espace utile. */
+  /* Floating panels take up almost the full width instead of being
+     capped at a desktop-sized width (560px/480px), with reduced
+     padding so they don't eat into all the usable space. */
   .panel-stack {
     top: 12px;
     width: calc(100% - 24px);
@@ -691,12 +789,12 @@ html, body {
   .result-panel,
   .publish-panel {
     width: 100%;
-    padding: 14px 16px;
+    padding: 16px 18px;
     max-height: 45vh;
   }
 
-  /* Cibles tactiles plus généreuses — 0.9rem sans padding explicite est
-     trop petit à toucher précisément au doigt. */
+  /* More generous touch targets — 0.9rem with no explicit padding is
+     too small to hit precisely with a finger. */
   .result-close,
   .search-close {
     font-size: 1.1rem;
@@ -705,14 +803,13 @@ html, body {
 
   .tracker-dismiss {
     padding: 6px;
-    top: 0;
-    right: 0;
+    top: 2px;
+    right: 2px;
   }
 
-  /* Bas de l'écran : sur desktop, suivi (gauche), toast (centre) et
-     compteur (droite) coexistent sur une seule rangée large. Sur mobile,
-     les empiler évite qu'ils se chevauchent quand plusieurs sont visibles
-     en même temps. */
+  /* Bottom of the screen: on desktop, tracker (left), toast (center)
+     and counter (right) coexist on a single wide row. On mobile,
+     stacking them avoids overlap when several are visible at once. */
   .tracker-panel {
     left: 12px;
     right: 12px;
@@ -722,11 +819,11 @@ html, body {
     font-size: 0.9rem;
   }
 
-  /* Compteur décoratif (nœuds/relations) : sur desktop il vit dans un
-     coin libre ; sur mobile, cet espace est disputé par le panneau de
-     suivi et les panneaux flottants qui peuvent s'ouvrir n'importe où
-     au-dessus du graphe. Plutôt que de risquer un chevauchement avec du
-     contenu réellement utile, on le masque simplement ici. */
+  /* Decorative counter (nodes/relations): on desktop it lives in a free
+     corner; on mobile, that space is contested by the tracker panel
+     and the floating panels, which can open anywhere above the graph.
+     Rather than risk overlapping genuinely useful content, it's simply
+     hidden here. */
   .corner-note {
     display: none;
   }
