@@ -64,14 +64,20 @@ body {
     var(--bg);
 }
 
-/* Fixed header: the submission field is no longer a centered prompt
-   floating above the graph, but a persistent bar at the top of the
-   page. The graph occupies the rest of the page below it. */
+/* The submission bar: not a centered prompt floating above the graph,
+   but a persistent bar — moved below the graph (order: 2, see .graph-area
+   and .bottom-bar) rather than above it, so the graph itself is the
+   first thing on the page. Still <header> in the markup (its own submit
+   field is still the primary way in) — only its visual position changed,
+   via flex order on the shared column body already uses, not by moving
+   the element in the document. border-top (not -bottom) now separates it
+   from the graph sitting above it instead of below. */
 .top-bar {
+  order: 2;
   flex-shrink: 0;
   padding: 16px 24px 12px;
   background: var(--bg-elevated);
-  border-bottom: 1px solid var(--border-hairline);
+  border-top: 1px solid var(--border-hairline);
   box-shadow: var(--shadow-soft);
   position: relative;
   z-index: 3;
@@ -96,6 +102,7 @@ body {
 }
 
 .graph-area {
+  order: 1;
   position: relative;
   flex: 1;
   min-height: 0; /* essential so a flex child with overflow sizes correctly */
@@ -513,6 +520,7 @@ body {
    overlaps it, and the fixed-position floaters above (tracker panel,
    toast) are offset by --bottombar-h to clear it. */
 .bottom-bar {
+  order: 3;
   flex-shrink: 0;
   min-height: var(--bottombar-h);
   display: flex;
