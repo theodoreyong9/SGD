@@ -38,6 +38,7 @@
   --r-pill: 999px;
   --shadow-panel: 0 24px 60px -16px rgba(0, 0, 0, 0.6), 0 8px 24px -8px rgba(0, 0, 0, 0.45);
   --shadow-soft: 0 8px 24px -10px rgba(0, 0, 0, 0.4);
+  --bottombar-h: 44px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
   --font-display: 'Fraunces', serif;
   --font-body: 'IBM Plex Sans', sans-serif;
@@ -81,7 +82,7 @@ body {
   flex-wrap: wrap;
   align-items: center;
   gap: 12px 24px;
-  max-width: 1180px;
+  max-width: 900px;
   margin: 0 auto;
 }
 
@@ -290,7 +291,7 @@ body {
 
 .status-line {
   min-height: 1.4em;
-  max-width: 1180px;
+  max-width: 900px;
   margin: 8px auto 0;
   font-size: 0.85rem;
   color: var(--text-muted);
@@ -403,7 +404,7 @@ body {
 
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(var(--bottombar-h) + 24px);
   left: 50%;
   transform: translateX(-50%) translateY(8px);
   z-index: 5;
@@ -431,47 +432,81 @@ body {
 }
 
 .auth-pill {
-  margin-left: auto;
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: rgba(232, 227, 216, 0.05);
-  border: 1px solid var(--border-hairline);
-  border-radius: var(--r-pill);
-  padding: 7px 8px 7px 14px;
-  font-size: 0.78rem;
+  gap: 8px;
   color: var(--text-muted);
+}
+
+.auth-pill::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-neutral);
+  flex-shrink: 0;
+}
+
+.auth-pill.connected::before {
+  background: var(--accent-agree);
 }
 
 .auth-disconnect {
   background: none;
-  border: 1px solid rgba(232, 227, 216, 0.25);
-  color: var(--text-muted);
-  border-radius: var(--r-pill);
-  padding: 4px 11px;
+  border: none;
+  color: var(--text-faint);
+  padding: 0;
+  margin-left: 2px;
   font-family: var(--font-body);
   font-size: 0.72rem;
+  text-decoration: underline;
   cursor: pointer;
-  transition: border-color 0.15s var(--ease), color 0.15s var(--ease);
+  transition: color 0.15s var(--ease);
 }
 
 .auth-disconnect:hover {
-  border-color: var(--accent-oppose);
   color: var(--accent-oppose);
 }
 
 .github-link {
   flex-shrink: 0;
-  margin-left: auto;
   color: var(--text-muted);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   text-decoration: none;
   transition: color 0.15s var(--ease);
 }
 
 .github-link:hover {
   color: var(--accent-agree);
+}
+
+/* Compact bottom bar: everything that used to compete for space in the
+   top bar (connection status, GitHub link) and the old floating corner
+   counter now live here instead, in normal document flow — the graph
+   area (flex: 1) simply shrinks to make room above it, so nothing ever
+   overlaps it, and the fixed-position floaters above (tracker panel,
+   toast) are offset by --bottombar-h to clear it. */
+.bottom-bar {
+  flex-shrink: 0;
+  min-height: var(--bottombar-h);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-hairline);
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+
+.bottom-bar-counts {
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .publish-status {
@@ -488,7 +523,13 @@ body {
 .tracker-panel {
   pointer-events: auto;
   position: fixed;
-  bottom: 18px;
+  /* Kept well clear of .toast's own offset below (not just a few px
+     apart): the tracker sits left-anchored while the toast is
+     centered, and at tablet-ish widths (roughly 680-1000px) their
+     horizontal ranges can still overlap, so the real separation has to
+     come from the vertical gap, not from assuming they never share the
+     same columns. */
+  bottom: calc(var(--bottombar-h) + 80px);
   left: 22px;
   z-index: 2;
   width: min(320px, calc(100vw - 44px));
@@ -716,61 +757,33 @@ body {
   font-style: italic;
 }
 
-.corner-note {
-  position: fixed;
-  bottom: 18px;
-  right: 22px;
-  z-index: 1;
-  font-size: 0.78rem;
-  color: var(--text-faint);
-  font-family: var(--font-body);
-}
-
 @media (prefers-reduced-motion: reduce) {
   #graph-canvas { display: none; }
   .search-panel, .publish-panel, .tracker-panel, .result-panel { animation: none; }
 }
 
 /* --- Mobile (≤ 680px) ---
-   The desktop layout assumes enough width to line up title + form +
-   auth pill + GitHub link on a single row, and enough height to fit
-   the tracker panel (bottom-left), the toast (bottom-center) and the
-   counter (bottom-right) without colliding. Neither fits on a phone:
-   this block reorganizes rather than just shrinking everything
-   proportionally. */
+   The top bar now only ever holds the headline + search form (auth
+   status and the GitHub link moved to the bottom bar, in normal flow,
+   so they can no longer contend for space here at all) — this block
+   mainly handles the title becoming redundant, touch target sizing,
+   and floating panels/bottom bar going full-width. */
 @media (max-width: 680px) {
   .top-bar {
     padding: 12px 14px 10px;
   }
 
   /* The full title ("What are you adding to the collective space?") +
-     the field + the two pills don't fit on phone width without
-     stepping on each other — the field's placeholder already carries
-     the same invitation, so the title becomes redundant here. */
+     the field don't fit on phone width without stepping on each other
+     — the field's placeholder already carries the same invitation, so
+     the title becomes redundant here. */
   .top-bar-headline {
     display: none;
-  }
-
-  .top-bar-row {
-    gap: 8px 12px;
   }
 
   .submit-form {
     flex: 1 1 100%;
     max-width: none;
-    order: 1;
-  }
-
-  .auth-pill {
-    order: 2;
-    font-size: 0.72rem;
-    padding: 5px 10px;
-  }
-
-  .github-link {
-    order: 3;
-    margin-left: 0;
-    font-size: 0.75rem;
   }
 
   #submit-input {
@@ -807,33 +820,35 @@ body {
     right: 2px;
   }
 
-  /* Bottom of the screen: on desktop, tracker (left), toast (center)
-     and counter (right) coexist on a single wide row. On mobile,
-     stacking them avoids overlap when several are visible at once. */
+  /* The base rules' bottom offsets already keep the tracker panel and
+     the toast from overlapping vertically (see their own comments) —
+     only their width/sizing needs to change here, to span nearly the
+     full screen instead of the desktop's narrower fixed widths. */
   .tracker-panel {
     left: 12px;
     right: 12px;
-    bottom: 12px;
     width: auto;
     max-height: 38vh;
     font-size: 0.9rem;
   }
 
-  /* Decorative counter (nodes/relations): on desktop it lives in a free
-     corner; on mobile, that space is contested by the tracker panel
-     and the floating panels, which can open anywhere above the graph.
-     Rather than risk overlapping genuinely useful content, it's simply
-     hidden here. */
-  .corner-note {
-    display: none;
-  }
-
   .toast {
     width: calc(100% - 24px);
     max-width: 340px;
-    bottom: 12px;
     font-size: 0.8rem;
     text-align: center;
+  }
+
+  /* The node/relation counts are decorative, and three items (auth,
+     counts, GitHub) at full sentence length would crowd a phone-width
+     bar — hidden here, the auth pill and GitHub link alone stay
+     comfortably compact. */
+  .bottom-bar {
+    padding: 0 14px;
+  }
+
+  .bottom-bar-counts {
+    display: none;
   }
 
   .device-code {

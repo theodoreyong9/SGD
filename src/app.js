@@ -59,6 +59,19 @@ let authToken = null; // valid token in memory, once verified
 //   2. OAuth configured, no valid token yet -> the first click on
 //      "Publish" starts the Device Flow.
 //   3. Valid token in memory -> direct, invisible publication.
+// setAuthStatus(connected): the pill itself stays compact (just
+// "Connected"/"Not connected") — the full explanation lives in a
+// `title` attribute instead of always being rendered, since the pill
+// now lives in the compact bottom bar rather than the roomier top bar.
+function setAuthStatus(connected) {
+  authStatusText.textContent = connected ? "Connected" : "Not connected";
+  authStatusText.title = connected
+    ? "Connected to GitHub — automatic publishing"
+    : "Not connected — publishing will open a GitHub authorization";
+  authPill.classList.toggle("connected", connected);
+  authDisconnect.classList.toggle("hidden", !connected);
+}
+
 async function initAuth() {
   if (!isOAuthConfigured()) {
     authPill.classList.add("hidden");
@@ -69,20 +82,17 @@ async function initAuth() {
   const stored = getStoredToken();
   if (stored && (await isTokenValid(stored))) {
     authToken = stored;
-    authStatusText.textContent = "Connected to GitHub — automatic publishing";
-    authDisconnect.classList.remove("hidden");
+    setAuthStatus(true);
   } else {
     authToken = null;
-    authStatusText.textContent = "Not connected — publishing will open a GitHub authorization";
-    authDisconnect.classList.add("hidden");
+    setAuthStatus(false);
   }
 }
 
 authDisconnect.addEventListener("click", () => {
   clearStoredToken();
   authToken = null;
-  authStatusText.textContent = "Not connected — publishing will open a GitHub authorization";
-  authDisconnect.classList.add("hidden");
+  setAuthStatus(false);
 });
 
 async function loadGraph() {
@@ -501,8 +511,7 @@ async function publishDirectly() {
         setPublishStatus("Waiting for your authorization on GitHub…");
       });
       deviceFlowBox.classList.add("hidden");
-      authStatusText.textContent = "Connected to GitHub — automatic publishing";
-      authDisconnect.classList.remove("hidden");
+      setAuthStatus(true);
       publishButton.textContent = "Publish";
       publishCopy.textContent = "Direct, automatic publishing — no GitHub tab will open.";
     }

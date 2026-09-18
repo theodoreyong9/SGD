@@ -21,11 +21,6 @@
       <button type="submit" id="submit-button">Send</button>
       <button type="button" id="search-button" class="search-button">Search</button>
     </form>
-    <div id="auth-pill" class="auth-pill hidden">
-      <span id="auth-status-text"></span>
-      <button id="auth-disconnect" class="auth-disconnect hidden">Disconnect</button>
-    </div>
-    <a href="https://github.com/theodoreyong9/SGD" target="_blank" rel="noopener" class="github-link">GitHub ↗</a>
   </div>
   <p id="status-line" class="status-line" aria-live="polite"></p>
 </header>
@@ -83,11 +78,18 @@
     </p>
     <ul id="tracker-list" class="tracker-list"></ul>
   </aside>
-
-  <footer class="corner-note">
-    <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations
-  </footer>
 </div>
+
+<footer id="bottom-bar" class="bottom-bar">
+  <div id="auth-pill" class="auth-pill hidden">
+    <span id="auth-status-text"></span>
+    <button id="auth-disconnect" class="auth-disconnect hidden">Disconnect</button>
+  </div>
+  <span class="bottom-bar-counts">
+    <span id="node-count">0</span> propositions&nbsp;·&nbsp;<span id="edge-count">0</span> relations
+  </span>
+  <a href="https://github.com/theodoreyong9/SGD" target="_blank" rel="noopener" class="github-link">GitHub ↗</a>
+</footer>
 
 <script type="module" src="src/app.js"></script>
 </body>
