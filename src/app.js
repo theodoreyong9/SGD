@@ -759,3 +759,12 @@ loadGraph().then(() => {
     }
   }
 });
+
+// Caches the app shell (see sw.js) so the page, styles, and whatever
+// graph was last loaded still open with no network. Silent either way —
+// publishing/searching against a live GitHub Issue still needs a real
+// connection regardless, so there's nothing actionable to tell the user
+// if this fails.
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js").catch(() => {});
+}

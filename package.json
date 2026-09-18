@@ -7,7 +7,9 @@
   "description": "SGD — collective participation via a semantic graph, on GitHub + GitHub Pages + WebLLM.",
   "scripts": {
     "validate": "node scripts/validate-submission.mjs",
-    "process": "node scripts/process-graph.mjs"
+    "process": "node scripts/process-graph.mjs",
+    "icons": "node scripts/generate-icons.mjs",
+    "check": "node scripts/check-sw-manifest.mjs"
   },
   "engines": {
     "node": ">=20"

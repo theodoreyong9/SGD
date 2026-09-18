@@ -108,6 +108,8 @@ Once both values are set, the site detects it automatically and switches the "Pu
 
 Open `index.html`, at the repository root, through a real local server (module imports need `http://`, not `file://`), e.g. `npx serve .`. The processing scripts (`npm run validate`, `npm run process`) are meant to run inside the GitHub Actions workflow, but can be exercised locally against a file in `submissions/pending/` for testing.
 
+It's also a PWA — installable from the browser's own install prompt, and `sw.js` caches the page, styles, and whatever graph was last loaded so it still opens with no network. Publishing or searching against a live GitHub Issue still needs a real connection regardless.
+
 ## Honest limits
 
 - **The extraction model hasn't been validated against high production volume.** It was chosen for being small enough to run affordably on a shared CI runner and compatible with the exact pipeline this project needs; if it starts falling back to minimal extraction systematically, that model choice is the first thing to check.
