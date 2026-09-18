@@ -6,7 +6,7 @@ Live: https://theodoreyong9.github.io/SGD/
 
 ## What this is
 
-Anyone can write a short text — an idea, an objection, a question — and submit it. There's no for/against button: a submission is never a vote, it's a proposition that takes its place in a shared, browsable semantic graph. An AI reads the text and extracts a small structured meaning from it (which domain it belongs to, what concepts it touches, what it relates to and how); that structure decides where the proposition lands in the graph and how it connects to what's already there. Repeating an idea that already exists strengthens it instead of duplicating it. Nothing about a node ever depends on who wrote it — there are no accounts, no profiles, no identity anywhere in the graph itself.
+Anyone can write a short text — an idea, an objection, a question — and submit it. There's no for/against button: a submission is never a vote, it's a proposition that takes its place in a shared, browsable semantic graph. An AI reads the text and extracts a small structured meaning from it (which domain it belongs to, what concepts it touches, what it relates to and how); that structure decides where the proposition lands in the graph and how it connects to what's already there. Repeating an idea that already exists strengthens it instead of duplicating it. Every proposition also carries where it came from — submitting requires sharing your location — but nothing about a node ever depends on who wrote it: there are no accounts, no profiles, no identity anywhere in the graph itself.
 
 ## How it works
 
@@ -50,6 +50,8 @@ There is no database, no server we run, and no account system beyond GitHub's ow
 
 **A canonical identity is reproducible.** The same idea, resubmitted in slightly different wording, normalizes down to the same identity (case, accents, whitespace, and field order are all stripped away before hashing) — so it strengthens the existing node rather than forking into a near-duplicate.
 
+**Location is attached to the idea, never to a person.** Submitting requires sharing your position, captured automatically from the browser — there's nothing to type in. That position becomes a property of the node itself, exactly like its domain or its concepts, fixed at the moment the idea first appears; it is never linked to a GitHub account, a name, or any other identity, and it never changes on later resubmissions of the same idea. The one place a location is ever compared to another is an explicit, optional search filter — never a default, and never something computed on a submission's behalf.
+
 ## Publishing
 
 There are two ways a submission becomes a real GitHub Issue, and the site picks automatically between them based on whether an optional OAuth App has been configured (see "Optional setup" below):
@@ -64,6 +66,7 @@ Both paths produce the exact same kind of Issue, and the workflow that processes
 **Guaranteed by construction:**
 - An Issue's body is treated as data, never as code. The processing workflow reads it through GitHub's API into a plain JSON file and only ever runs `JSON.parse` plus a schema check against it — nothing is interpolated into a shell command or executed.
 - The semantic structure and identity of a proposition are never something a submitter can influence. Only the text itself crosses from the browser to the Issue; the structure and identity that end up in the graph are computed by GitHub's own runner, from that text alone.
+- A submission with no location, or one outside real coordinate bounds, is rejected the same way one with no text is — checked server-side, not just assumed from the interface. Coordinates are also rounded to about 111 meters before they ever leave the browser, so a submission never carries more precision than a search radius actually needs.
 - Repeating the same underlying idea has a diminishing marginal effect (each further occurrence contributes less than the last), so simple repetition doesn't let one idea dominate the graph.
 - The optional OAuth token, when used, lives only in your own browser's local storage and carries the narrowest possible scope (opening issues on public repos) — the relay it briefly passes through never sees it again after the initial exchange.
 
@@ -72,6 +75,7 @@ Both paths produce the exact same kind of Issue, and the workflow that processes
 - **That an author is a distinct human.** A GitHub account has a cost to create at scale but is not proof of humanity.
 - **Resistance to patient rephrasing.** Someone willing to reword the same point slightly each time can partially outrun the diminishing-return mechanism, since it tracks exact normalized identity, not approximate meaning.
 - **Quality of the automated extraction.** The model doing the real, authoritative extraction is a small one chosen to run affordably on a shared CI runner; a weak extraction produces a less informative node, never a broken one, but it is not a guarantee of accuracy.
+- **That a submitted location is genuine.** It's whatever the browser's own Geolocation API reports — nothing here can verify it against the submitter's actual position, and browser location itself is only ever approximate (network-based positioning routinely resolves to a whole city, not a precise point).
 
 ## How the graph scores a proposition
 
@@ -110,4 +114,9 @@ Open `index.html`, at the repository root, through a real local server (module i
 - **The similarity threshold for automatically-generated connections (0.72) is a reasonable starting guess, not an empirically tuned value.** It should be revisited once there's enough real submission volume to see whether the graph over- or under-connects paraphrases.
 - **A proposition's domain is a closed set of ten categories chosen by the model at submission time, not an emergent grouping.** The bridge score partially depends on it; clustering embeddings directly instead would be a more principled long-term direction.
 - **There is no proof of human uniqueness.** A determined actor can create multiple GitHub accounts; nothing here defends against that beyond the cost of doing so.
+- **A location, once published, is effectively permanent.** It lives in a public GitHub Issue and then in a versioned graph file — rounding it to ~111m reduces precision, but doesn't undo publication. Anyone submitting from a place that could identify them (home, workplace) should weigh that before submitting, the same way they would before posting it anywhere else public and permanent.
 - **The graph's rendering has no upper bound built in.** Node repulsion is computed pairwise, which will need a spatial index if the graph grows into the thousands of nodes; embeddings are also stored as plain arrays of floats, which would benefit from a more compact format at scale.
+
+## License
+
+MIT — see `LICENSE`.

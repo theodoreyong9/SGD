@@ -32,6 +32,14 @@
     <div id="search-panel" class="search-panel hidden">
       <div class="search-header">
         <span>In the graph</span>
+        <select id="radius-select" class="radius-select" aria-label="Limit search to a radius (requires location)">
+          <option value="">Any distance</option>
+          <option value="1">Within 1 km</option>
+          <option value="5">Within 5 km</option>
+          <option value="25">Within 25 km</option>
+          <option value="100">Within 100 km</option>
+          <option value="500">Within 500 km</option>
+        </select>
         <button id="search-close" class="result-close" aria-label="Close">✕</button>
       </div>
       <ul id="search-list" class="search-list"></ul>

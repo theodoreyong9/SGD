@@ -77,6 +77,7 @@ async function upsertNode(graph, submission) {
       type: "proposition",
       text: submission.text,
       semantic: submission.semantic,
+      location: submission.location,
       embedding,
       first_seen: now,
       last_seen: now,
@@ -91,7 +92,10 @@ async function upsertNode(graph, submission) {
     // Re-embed on every occurrence — wording can drift slightly across
     // resubmissions — but novelty itself is fixed at first appearance
     // (spec: novelty describes what the idea ADDED to the graph, not a
-    // property that should keep changing after the fact).
+    // property that should keep changing after the fact). `location` is
+    // the same: it's where this idea was FIRST proposed, not a live
+    // record of everywhere it's been resubmitted from since — kept
+    // untouched on every later occurrence, for the identical reason.
     node.embedding = embedding;
   }
 
@@ -303,13 +307,18 @@ async function main() {
       renameSync(fullPath, join(PROCESSED_DIR, file));
       continue;
     }
+    if (typeof raw.location?.lat !== "number" || typeof raw.location?.lon !== "number") {
+      console.warn(`Skipped (missing location): ${file}`);
+      renameSync(fullPath, join(PROCESSED_DIR, file));
+      continue;
+    }
 
     // This is WHERE, and only where, the semantic structure and
     // canonical_key exist. `raw.semantic` / `raw.canonical_key`, if an
     // old submission format still contained them, are never read.
     const semantic = await extractSemantic(raw.text);
     const key = canonicalKey(semantic);
-    const submission = { text: raw.text, semantic, canonical_key: key };
+    const submission = { text: raw.text, semantic, canonical_key: key, location: raw.location };
 
     const node = await upsertNode(graph, submission);
     await upsertEdges(graph, node, submission);

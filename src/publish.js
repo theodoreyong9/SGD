@@ -40,7 +40,7 @@ const MAX_URL_LENGTH = 7500;
 
 export class SubmissionTooLargeError extends Error {}
 
-// buildSubmissionIssueUrl({ text, ref }) -> string (full URL)
+// buildSubmissionIssueUrl({ text, ref, location }) -> string (full URL)
 //
 // IMPORTANT CHANGE: this payload no longer contains `semantic` or
 // `canonical_key`. Until now, the browser sent the result of its own
@@ -49,18 +49,21 @@ export class SubmissionTooLargeError extends Error {}
 // `semantic` block unrelated to `text` while staying internally
 // consistent. Still sending that block would no longer have any
 // effect: scripts/validate-submission.mjs and scripts/process-graph.mjs
-// don't read it at all anymore. `text` is now the ONLY data that
-// matters — it's the server that extracts its own authoritative
-// structure from it (see scripts/semantic-extract.mjs).
+// don't read it at all anymore. `text` and `location` are the only
+// data that matter — it's the server that extracts its own
+// authoritative structure from `text` (see scripts/semantic-extract.mjs)
+// and stores `location` as-is, on the node, never alongside any
+// contributor identity.
 //
 // `ref` is a client-generated identifier (see src/app.js,
 // crypto.randomUUID()), with NO protocol role whatsoever — it's only
 // used to find this Issue again later via GitHub's Search API, for the
 // tracking shown in "Your submissions" (src/tracker.js). Replacing or
 // removing it changes nothing about what's accepted or rejected.
-export function buildSubmissionIssueUrl({ text, ref }) {
+export function buildSubmissionIssueUrl({ text, ref, location }) {
   const payload = {
     text,
+    location,
     ref,
     submitted_at: new Date().toISOString(),
     client_version: "3.0.0",
@@ -71,10 +74,10 @@ export function buildSubmissionIssueUrl({ text, ref }) {
     SUBMISSION_MARKER,
     "",
     "This Issue was pre-filled automatically by the SGD interface.",
-    "Only the `text` field below is used: the semantic structure and",
-    "the identity of this proposition are entirely recomputed",
-    "server-side, from this text alone — nothing else in this block is",
-    "read or trusted.",
+    "Only the `text` and `location` fields below are used: the semantic",
+    "structure and the identity of this proposition are entirely",
+    "recomputed server-side, from the text alone — nothing else in this",
+    "block is read or trusted.",
     "",
     "```json",
     JSON.stringify(payload, null, 2),

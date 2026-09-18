@@ -11,18 +11,19 @@ const SUBMISSION_MARKER = "<!-- sgd:submission:v1 -->";
 
 export class GitHubApiError extends Error {}
 
-// createSubmissionIssue(token, { text, ref }) -> { number, html_url }
+// createSubmissionIssue(token, { text, ref, location }) -> { number, html_url }
 //
 // Opens the Issue directly via the API, never redirecting the user to
 // github.com — that's the concrete difference from the old "pre-filled
 // link" flow. `ref` still has no protocol role at all (see
-// scripts/validate-submission.mjs, which has only ever read `text`) —
-// kept for consistency, even though its original purpose (finding the
-// issue via the Search API) is less necessary now that the issue number
-// is known immediately from this call's own return value.
-export async function createSubmissionIssue(token, { text, ref }) {
+// scripts/validate-submission.mjs, which has only ever read `text` and
+// `location`) — kept for consistency, even though its original purpose
+// (finding the issue via the Search API) is less necessary now that the
+// issue number is known immediately from this call's own return value.
+export async function createSubmissionIssue(token, { text, ref, location }) {
   const payload = {
     text,
+    location,
     ref,
     submitted_at: new Date().toISOString(),
     client_version: "4.0.0",
@@ -34,9 +35,9 @@ export async function createSubmissionIssue(token, { text, ref }) {
     "This Issue was created automatically by the SGD interface, via the",
     "GitHub API authenticated with your account — you didn't have to do",
     "anything on github.com for this particular submission. Only the",
-    "`text` field below is used: the semantic structure and the",
-    "identity of this proposition are entirely recomputed server-side,",
-    "from this text alone.",
+    "`text` and `location` fields below are used: the semantic",
+    "structure and the identity of this proposition are entirely",
+    "recomputed server-side, from the text alone.",
     "",
     "```json",
     JSON.stringify(payload, null, 2),

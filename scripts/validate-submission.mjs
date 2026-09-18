@@ -16,10 +16,17 @@
 // reasoning.
 //
 // What THIS file still guarantees: that `text` is indeed a non-empty
-// string, of reasonable length, and that the author hasn't exceeded the
-// daily submission quota. Nothing more — semantic structuring and
-// identity (canonical_key) are now entirely the responsibility of
+// string, of reasonable length, that `location` is a real pair of
+// coordinates, and that the author hasn't exceeded the daily
+// submission quota. Nothing more — semantic structuring and identity
+// (canonical_key) are now entirely the responsibility of
 // scripts/process-graph.mjs, downstream.
+//
+// LOCATION: every submission is tagged with where it came from — never
+// with who submitted it. `location` travels alongside `text` in the
+// same submitted JSON block, is validated here the same way, and ends
+// up on the node itself (scripts/process-graph.mjs), never next to any
+// contributor identity — exactly the same treatment as `text`.
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -86,6 +93,26 @@ if (text.length > MAX_TEXT_LENGTH) {
   reasons.push(`'text' exceeds ${MAX_TEXT_LENGTH} characters`);
 }
 
+// Required, not optional: a submission with no real, plausible pair of
+// coordinates is rejected the same way one with no text is. Bounds
+// check only — this can't verify the location is genuine, only that
+// it's a coordinate that could exist.
+const location = submitted.location;
+const hasValidLocation =
+  location &&
+  typeof location.lat === "number" &&
+  typeof location.lon === "number" &&
+  Number.isFinite(location.lat) &&
+  Number.isFinite(location.lon) &&
+  location.lat >= -90 &&
+  location.lat <= 90 &&
+  location.lon >= -180 &&
+  location.lon <= 180;
+
+if (!hasValidLocation) {
+  reasons.push("missing or invalid 'location' field (requires numeric lat/lon)");
+}
+
 if (reasons.length) fail(reasons);
 
 // 4. Rate-limit per GitHub account. Any issue carrying the marker is
@@ -134,6 +161,7 @@ writeFileSync(
   JSON.stringify(
     {
       text,
+      location: { lat: location.lat, lon: location.lon },
       submitted_at: new Date().toISOString(),
       source_issue: issueNumber,
       client_version: submitted.client_version || "unknown",

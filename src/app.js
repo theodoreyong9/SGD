@@ -1,6 +1,7 @@
 import { createGraphRenderer } from "./graph-render.js";
 import { parseWithAI, isWebGPUAvailable, isModelLoaded } from "./semantic.js";
 import { embed, textForEmbedding, cosineSimilarity } from "./embeddings.js";
+import { getCurrentLocation, haversineDistanceKm } from "./geolocation.js";
 import { synthesizeSubgraph } from "./synthesis.js";
 import { buildSubmissionIssueUrl, SubmissionTooLargeError } from "./publish.js";
 import { recordSubmission, getTracked, refreshStatus, dismissTracked } from "./tracker.js";
@@ -43,13 +44,14 @@ const trackerList = document.getElementById("tracker-list");
 const searchPanel = document.getElementById("search-panel");
 const searchList = document.getElementById("search-list");
 const searchClose = document.getElementById("search-close");
+const radiusSelect = document.getElementById("radius-select");
 const authPill = document.getElementById("auth-pill");
 const authStatusText = document.getElementById("auth-status-text");
 const authDisconnect = document.getElementById("auth-disconnect");
 const toastEl = document.getElementById("toast");
 
 let graph = { nodes: [], edges: [] };
-let lastParsed = null; // { text, semantic } — local preview only, non-authoritative
+let lastParsed = null; // { text, semantic, location } — local preview only, non-authoritative
 let authToken = null; // valid token in memory, once verified
 
 // --- Authentication (see src/oauth.js, src/github-api.js) ---
@@ -276,6 +278,7 @@ function showNodeDetail(node, { fromSearch = false } = {}) {
   );
   resultRelations.innerHTML =
     lines.map((l) => `<div>${l}</div>`).join("") +
+    renderLocation(node.location) +
     renderBreakdown(node) +
     renderSynthesisSection(node.semantic.domain);
 
@@ -313,6 +316,13 @@ function truncate(str, n) {
 // "Send" (src/semantic.js, WebGPU). The raw query text is embedded
 // directly, without extracting concepts/objective/means: for just
 // "going to see what's there", full structuring is an unnecessary cost.
+//
+// The radius filter (radiusSelect) is the one place search touches
+// geolocation, and only when a radius is actually selected — unlike
+// submission, where it's required unconditionally. Filtering happens
+// BEFORE ranking by similarity, on the full candidate set, so a close
+// match a few hundred meters away is never pushed out by unrelated
+// results that merely happen to rank higher globally.
 async function runSearch() {
   const text = input.value.trim();
   if (!text) return;
@@ -320,49 +330,90 @@ async function runSearch() {
   resultPanel.classList.add("hidden");
   publishPanel.classList.add("hidden");
   searchButton.disabled = true;
-  setStatus("Searching the graph…");
 
   try {
+    const radiusKm = radiusSelect.value ? Number(radiusSelect.value) : null;
+    let origin = null;
+    if (radiusKm) {
+      setStatus("Requesting your location…");
+      try {
+        origin = await getCurrentLocation();
+      } catch (err) {
+        setStatus(err.message, false);
+        return;
+      }
+    }
+
+    setStatus("Searching the graph…");
     if (graph.nodes.length === 0) {
-      renderSearchResults([], text);
+      renderSearchResults([], text, radiusKm);
+      setStatus("");
       return;
     }
+
+    let candidates = graph.nodes.filter((n) => n.embedding);
+    if (radiusKm) {
+      candidates = candidates
+        .filter((n) => n.location)
+        .map((n) => ({ node: n, distanceKm: haversineDistanceKm(origin, n.location) }))
+        .filter(({ distanceKm }) => distanceKm <= radiusKm)
+        .map(({ node }) => node);
+    }
+
     const queryEmbedding = await embed(text);
-    const ranked = graph.nodes
-      .filter((n) => n.embedding)
-      .map((n) => ({ node: n, similarity: cosineSimilarity(queryEmbedding, n.embedding) }))
+    const ranked = candidates
+      .map((n) => ({
+        node: n,
+        similarity: cosineSimilarity(queryEmbedding, n.embedding),
+        distanceKm: radiusKm ? haversineDistanceKm(origin, n.location) : null,
+      }))
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, 8);
-    renderSearchResults(ranked, text);
+    renderSearchResults(ranked, text, radiusKm);
+    setStatus("");
   } catch (err) {
+    // NOTE: this used to be immediately overwritten by a bare
+    // setStatus("") that lived in `finally` below — a real,
+    // pre-existing bug that meant a search error was never actually
+    // visible, just flashed and cleared in the same tick. `finally`
+    // now only ever re-enables the button; every status-clearing call
+    // lives on its own success path instead, so an error message
+    // set here is the last thing written to the status line.
     console.error(err);
-    setStatus(`Search error: ${err.message}`);
+    setStatus(`Search error: ${err.message}`, false);
   } finally {
     searchButton.disabled = false;
-    setStatus("");
   }
 }
 
 let lastSearchRanked = null;
 let lastSearchQuery = null;
+let lastSearchRadiusKm = null;
 
-function renderSearchResults(ranked, query) {
+function renderSearchResults(ranked, query, radiusKm) {
   lastSearchRanked = ranked;
   lastSearchQuery = query;
+  lastSearchRadiusKm = radiusKm;
   searchPanel.classList.remove("hidden");
   if (ranked.length === 0) {
-    searchList.innerHTML = `<li class="search-empty">Nothing in the graph for “${escapeHtml(query)}” yet.</li>`;
+    const scope = radiusKm ? ` within ${radiusKm} km` : "";
+    searchList.innerHTML = `<li class="search-empty">Nothing in the graph for “${escapeHtml(query)}”${scope} yet.</li>`;
     return;
   }
   searchList.innerHTML = ranked
     .map(
-      ({ node, similarity }) => `
+      ({ node, similarity, distanceKm }) => `
         <li class="search-item" data-key="${node.id}">
           <span class="search-similarity">${Math.round(similarity * 100)}%</span>
           <span class="search-text">${escapeHtml(truncate(node.text, 70))}</span>
+          ${distanceKm != null ? `<span class="search-distance">${formatDistance(distanceKm)}</span>` : ""}
         </li>`
     )
     .join("");
+}
+
+function formatDistance(km) {
+  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`;
 }
 
 searchList.addEventListener("click", (e) => {
@@ -373,14 +424,36 @@ searchList.addEventListener("click", (e) => {
 
 resultBack.addEventListener("click", () => {
   resultPanel.classList.add("hidden");
-  if (lastSearchRanked) renderSearchResults(lastSearchRanked, lastSearchQuery);
+  if (lastSearchRanked) renderSearchResults(lastSearchRanked, lastSearchQuery, lastSearchRadiusKm);
 });
 
 searchButton.addEventListener("click", runSearch);
 
+// Changing the radius re-runs the current query immediately rather
+// than waiting for another click on "Search" — the query text is
+// already sitting in the input, there's no reason to make the radius
+// feel like a separate step.
+radiusSelect.addEventListener("change", () => {
+  if (input.value.trim()) runSearch();
+});
+
 searchClose.addEventListener("click", () => {
   searchPanel.classList.add("hidden");
 });
+
+// renderLocation({ lat, lon } | undefined) -> HTML
+//
+// Plain coordinates, never a reverse-geocoded place name — there's no
+// such lookup anywhere in this project, and adding one would be a real
+// third-party dependency for a purely cosmetic label. This is only
+// ever the same location the node/preview already carries; it's never
+// looked up again or refined here.
+function renderLocation(location) {
+  if (!location) return "";
+  const lat = `${Math.abs(location.lat).toFixed(3)}°${location.lat >= 0 ? "N" : "S"}`;
+  const lon = `${Math.abs(location.lon).toFixed(3)}°${location.lon >= 0 ? "E" : "W"}`;
+  return `<div class="result-location">📍 ${lat}, ${lon}</div>`;
+}
 
 function renderBreakdown(node) {
   if (!node?.stats?.breakdown) return "";
@@ -404,7 +477,7 @@ function renderBreakdown(node) {
   return `<div class="breakdown"><div class="breakdown-total">Influence: ${b.influence}</div>${bars}</div>`;
 }
 
-async function showResult({ semantic }) {
+async function showResult({ semantic, location }) {
   resultBack.classList.add("hidden"); // submission preview, never "from search"
   const { node: closest, similarity } = await findClosestNode(semantic);
 
@@ -440,6 +513,7 @@ async function showResult({ semantic }) {
 
   resultRelations.innerHTML =
     lines.map((l) => `<div>${l}</div>`).join("") +
+    renderLocation(location) +
     renderBreakdown(breakdownNode) +
     renderSynthesisSection(semantic.domain);
 
@@ -459,7 +533,7 @@ function setupPublishPanel() {
     // Legacy fallback: pre-filled link, opens GitHub. See README.
     try {
       const ref = crypto.randomUUID();
-      const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref });
+      const url = buildSubmissionIssueUrl({ text: lastParsed.text, ref, location: lastParsed.location });
       publishCopy.textContent =
         "You're about to open a pre-filled GitHub Issue on your own account: review it, then click “Submit new issue” on GitHub to actually publish it — come back here afterward, this tab tracks processing automatically.";
       publishLink.href = url;
@@ -518,7 +592,7 @@ async function publishDirectly() {
 
     setPublishStatus("Publishing…");
     const ref = crypto.randomUUID();
-    const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref });
+    const issue = await createSubmissionIssue(authToken, { text: lastParsed.text, ref, location: lastParsed.location });
 
     const list = recordSubmission({
       number: issue.number,
@@ -612,6 +686,19 @@ form.addEventListener("submit", async (e) => {
   publishStatus.textContent = "";
 
   try {
+    // Required, not optional, and checked first: every proposition is
+    // tagged with where it came from (never with who submitted it —
+    // see src/geolocation.js and scripts/validate-submission.mjs), so
+    // there's no point loading the local model at all if this fails.
+    let location;
+    try {
+      setStatus("Requesting your location…");
+      location = await getCurrentLocation();
+    } catch (err) {
+      setStatus(err.message, false);
+      return;
+    }
+
     if (!isWebGPUAvailable()) {
       setStatus("WebGPU unavailable in this browser — local semantic analysis can't run here.", false);
       return;
@@ -633,7 +720,7 @@ form.addEventListener("submit", async (e) => {
         setStatus("Analyzing your text…");
       }
     });
-    lastParsed = { text, semantic };
+    lastParsed = { text, semantic, location };
 
     // The spinner keeps running: showResult() still does an embedding
     // search before showing the result and the "Publish" button — no
